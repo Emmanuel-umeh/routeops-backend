@@ -13,9 +13,8 @@ import { InputType, Field } from "@nestjs/graphql";
 import { ApiProperty } from "@nestjs/swagger";
 import { StringNullableFilter } from "../../util/StringNullableFilter";
 import { Type } from "class-transformer";
-import { IsOptional, IsEnum, ValidateNested } from "class-validator";
+import { IsOptional, ValidateNested } from "class-validator";
 import { StringFilter } from "../../util/StringFilter";
-import { EnumCityHallName } from "./EnumCityHallName";
 import { ProjectListRelationFilter } from "../../project/base/ProjectListRelationFilter";
 import { UserListRelationFilter } from "../../user/base/UserListRelationFilter";
 
@@ -45,14 +44,14 @@ class CityHallWhereInput {
 
   @ApiProperty({
     required: false,
-    enum: EnumCityHallName,
+    type: StringNullableFilter,
   })
-  @IsEnum(EnumCityHallName)
+  @Type(() => StringNullableFilter)
   @IsOptional()
-  @Field(() => EnumCityHallName, {
+  @Field(() => StringNullableFilter, {
     nullable: true,
   })
-  name?: "Option1";
+  name?: StringNullableFilter;
 
   @ApiProperty({
     required: false,

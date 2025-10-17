@@ -80,7 +80,7 @@ class SurveyUpdateInput {
   @Field(() => String, {
     nullable: true,
   })
-  remarks?: string | null;
+  remarksText?: string | null;
 
   @ApiProperty({
     required: false,

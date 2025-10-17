@@ -110,7 +110,7 @@ class UserWhereInput {
   @Field(() => EnumUserRole, {
     nullable: true,
   })
-  role?: "Option1";
+  role?: "admin" | "dashboard_user" | "app_user";
 
   @ApiProperty({
     required: false,

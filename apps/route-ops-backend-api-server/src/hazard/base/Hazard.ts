@@ -26,6 +26,7 @@ import {
 import { Type } from "class-transformer";
 import { Project } from "../../project/base/Project";
 import { RoutePoint } from "../../routePoint/base/RoutePoint";
+import { Remark } from "../../remark/base/Remark";
 
 @ObjectType()
 class Hazard {
@@ -115,6 +116,18 @@ class Hazard {
   @Type(() => Project)
   @IsOptional()
   project?: Project | null;
+
+  @ApiProperty({
+    required: false,
+    type: () => [Remark],
+  })
+  @ValidateNested()
+  @Type(() => Remark)
+  @IsOptional()
+  @Field(() => [Remark], {
+    nullable: true,
+  })
+  remarks?: Remark[] | null;
 
   @ApiProperty({
     required: false,

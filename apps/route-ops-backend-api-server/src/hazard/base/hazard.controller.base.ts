@@ -166,6 +166,31 @@ export class HazardControllerBase {
           },
         },
 
+        remarks: {
+          select: {
+            id: true,
+            text: true,
+            timestamp: true,
+            createdAt: true,
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+            survey: {
+              select: {
+                id: true,
+                name: true,
+                status: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+
         routePoint: {
           select: {
             id: true,

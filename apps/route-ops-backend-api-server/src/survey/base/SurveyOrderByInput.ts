@@ -94,7 +94,7 @@ class SurveyOrderByInput {
   @Field(() => SortOrder, {
     nullable: true,
   })
-  remarks?: SortOrder;
+  remarksText?: SortOrder;
 
   @ApiProperty({
     required: false,

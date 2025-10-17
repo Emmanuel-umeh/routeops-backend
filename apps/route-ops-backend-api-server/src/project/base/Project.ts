@@ -128,7 +128,7 @@ class Project {
   @Field(() => EnumProjectStatus, {
     nullable: true,
   })
-  status?: "Option1" | null;
+  status?: "active" | "inactive" | "completed" | "pending" | null;
 
   @ApiProperty({
     required: false,

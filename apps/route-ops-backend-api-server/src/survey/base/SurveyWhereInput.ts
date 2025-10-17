@@ -17,6 +17,7 @@ import { IsOptional, ValidateNested } from "class-validator";
 import { DateTimeNullableFilter } from "../../util/DateTimeNullableFilter";
 import { StringFilter } from "../../util/StringFilter";
 import { ProjectWhereUniqueInput } from "../../project/base/ProjectWhereUniqueInput";
+import { RemarkListRelationFilter } from "../../remark/base/RemarkListRelationFilter";
 
 @InputType()
 class SurveyWhereInput {
@@ -78,14 +79,15 @@ class SurveyWhereInput {
 
   @ApiProperty({
     required: false,
-    type: StringNullableFilter,
+    type: () => RemarkListRelationFilter,
   })
-  @Type(() => StringNullableFilter)
+  @ValidateNested()
+  @Type(() => RemarkListRelationFilter)
   @IsOptional()
-  @Field(() => StringNullableFilter, {
+  @Field(() => RemarkListRelationFilter, {
     nullable: true,
   })
-  remarks?: StringNullableFilter;
+  remarks?: RemarkListRelationFilter;
 
   @ApiProperty({
     required: false,

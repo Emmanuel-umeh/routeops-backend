@@ -123,7 +123,7 @@ class ProjectWhereInput {
   @Field(() => EnumProjectStatus, {
     nullable: true,
   })
-  status?: "Option1";
+  status?: "active" | "inactive" | "completed" | "pending";
 
   @ApiProperty({
     required: false,

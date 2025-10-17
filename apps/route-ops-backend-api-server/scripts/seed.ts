@@ -28,7 +28,12 @@ async function seed(bcryptSalt: Salt) {
   const data = {
     username: "admin",
     password: await hash("admin", bcryptSalt),
-    roles: ["user"],
+    role: "admin" as const,
+    roles: ["admin"],
+    email: "admin@routeops.com",
+    firstName: "System",
+    lastName: "Administrator",
+    isActive: true,
   };
 
   await client.user.upsert({
@@ -36,7 +41,15 @@ async function seed(bcryptSalt: Salt) {
       username: data.username,
     },
 
-    update: {},
+    update: {
+      password: data.password,
+      role: data.role,
+      roles: data.roles,
+      email: data.email,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      isActive: data.isActive,
+    },
     create: data,
   });
 

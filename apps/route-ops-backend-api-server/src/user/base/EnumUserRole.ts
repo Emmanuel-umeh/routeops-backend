@@ -12,7 +12,9 @@ https://docs.amplication.com/how-to/custom-code
 import { registerEnumType } from "@nestjs/graphql";
 
 export enum EnumUserRole {
-  Option_1 = "Option1",
+  ADMIN = "admin",
+  DASHBOARD_USER = "dashboard_user",
+  APP_USER = "app_user",
 }
 
 registerEnumType(EnumUserRole, {

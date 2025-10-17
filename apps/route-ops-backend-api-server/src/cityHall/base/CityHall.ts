@@ -16,11 +16,9 @@ import {
   IsString,
   MaxLength,
   IsOptional,
-  IsEnum,
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
-import { EnumCityHallName } from "./EnumCityHallName";
 import { Project } from "../../project/base/Project";
 import { User } from "../../user/base/User";
 
@@ -56,14 +54,14 @@ class CityHall {
 
   @ApiProperty({
     required: false,
-    enum: EnumCityHallName,
+    type: String,
   })
-  @IsEnum(EnumCityHallName)
+  @IsString()
   @IsOptional()
-  @Field(() => EnumCityHallName, {
+  @Field(() => String, {
     nullable: true,
   })
-  name?: "Option1" | null;
+  name?: string | null;
 
   @ApiProperty({
     required: false,

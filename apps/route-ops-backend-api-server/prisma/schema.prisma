@@ -1,6 +1,6 @@
 datasource db {
   provider = "mongodb"
-  url      = env("DB_URL")
+  url      = "mongodb+srv://routeops:routeops12345@cluster0.e3gp8ui.mongodb.net/routeops-dev?retryWrites=true&w=majority&appName=Cluster0"
 }
 
 generator client {
@@ -11,7 +11,7 @@ model CityHall {
   createdAt   DateTime          @default(now())
   description String?
   id          String            @id @default(auto()) @map("_id") @db.ObjectId
-  name        EnumCityHallName?
+  name        String?
   projects    Project[]
   updatedAt   DateTime          @updatedAt
   users       User[]
@@ -49,7 +49,11 @@ model Project {
 
 model Remark {
   createdAt DateTime  @default(now())
+  hazard    Hazard?   @relation(fields: [hazardId], references: [id])
+  hazardId  String?   @db.ObjectId
   id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  survey    Survey?   @relation(fields: [surveyId], references: [id])
+  surveyId  String?   @db.ObjectId
   text      String?
   timestamp DateTime?
   updatedAt DateTime  @updatedAt
@@ -67,6 +71,7 @@ model Hazard {
   longitude    Float?
   project      Project?    @relation(fields: [projectId], references: [id])
   projectId    String?     @db.ObjectId
+  remarks      Remark[]
   routePoint   RoutePoint? @relation(fields: [routePointId], references: [id])
   routePointId String?     @db.ObjectId
   severity     String?
@@ -82,7 +87,8 @@ model Survey {
   name         String?
   project      Project?  @relation(fields: [projectId], references: [id])
   projectId    String?   @db.ObjectId
-  remarks      String?
+  remarks      Remark[]
+  remarksText  String?
   startTime    DateTime?
   status       String?
   updatedAt    DateTime  @updatedAt
@@ -105,14 +111,16 @@ model User {
   username   String        @unique
 }
 
-enum EnumCityHallName {
-  Option1
-}
 
 enum EnumProjectStatus {
-  Option1
+  active
+  inactive
+  completed
+  pending
 }
 
 enum EnumUserRole {
-  Option1
+  admin
+  dashboard_user
+  app_user
 }

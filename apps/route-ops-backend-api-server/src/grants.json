@@ -1,212 +1,367 @@
 [
+  // ===== ADMIN PERMISSIONS - Full Access =====
   {
-    "role": "user",
-    "resource": "CityHall",
-    "action": "read:own",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "CityHall",
-    "action": "create:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "CityHall",
-    "action": "update:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "CityHall",
-    "action": "delete:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "CityHall",
-    "action": "read:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "RoutePoint",
-    "action": "read:own",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "RoutePoint",
-    "action": "create:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "RoutePoint",
-    "action": "update:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "RoutePoint",
-    "action": "delete:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "RoutePoint",
-    "action": "read:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Project",
-    "action": "read:own",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Project",
-    "action": "create:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Project",
-    "action": "update:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Project",
-    "action": "delete:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Project",
-    "action": "read:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Remark",
-    "action": "read:own",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Remark",
-    "action": "create:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Remark",
-    "action": "update:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Remark",
-    "action": "delete:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Remark",
-    "action": "read:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Hazard",
-    "action": "read:own",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Hazard",
-    "action": "create:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Hazard",
-    "action": "update:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Hazard",
-    "action": "delete:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Hazard",
-    "action": "read:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Survey",
-    "action": "read:own",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Survey",
-    "action": "create:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Survey",
-    "action": "update:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Survey",
-    "action": "delete:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "Survey",
-    "action": "read:any",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
-    "resource": "User",
-    "action": "read:own",
-    "attributes": "*"
-  },
-  {
-    "role": "user",
+    "role": "admin",
     "resource": "User",
     "action": "create:any",
     "attributes": "*"
   },
   {
-    "role": "user",
+    "role": "admin",
+    "resource": "User",
+    "action": "read:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
     "resource": "User",
     "action": "update:any",
     "attributes": "*"
   },
   {
-    "role": "user",
+    "role": "admin",
     "resource": "User",
     "action": "delete:any",
     "attributes": "*"
   },
   {
-    "role": "user",
-    "resource": "User",
+    "role": "admin",
+    "resource": "CityHall",
+    "action": "create:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "CityHall",
     "action": "read:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "CityHall",
+    "action": "update:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "CityHall",
+    "action": "delete:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Project",
+    "action": "create:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Project",
+    "action": "read:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Project",
+    "action": "update:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Project",
+    "action": "delete:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "RoutePoint",
+    "action": "create:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "RoutePoint",
+    "action": "read:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "RoutePoint",
+    "action": "update:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "RoutePoint",
+    "action": "delete:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Hazard",
+    "action": "create:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Hazard",
+    "action": "read:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Hazard",
+    "action": "update:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Hazard",
+    "action": "delete:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Survey",
+    "action": "create:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Survey",
+    "action": "read:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Survey",
+    "action": "update:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Survey",
+    "action": "delete:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Remark",
+    "action": "create:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Remark",
+    "action": "read:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Remark",
+    "action": "update:any",
+    "attributes": "*"
+  },
+  {
+    "role": "admin",
+    "resource": "Remark",
+    "action": "delete:any",
+    "attributes": "*"
+  },
+
+  // ===== DASHBOARD USER PERMISSIONS - Limited to their City Hall =====
+  {
+    "role": "dashboard_user",
+    "resource": "User",
+    "action": "create:own",
+    "attributes": ["cityHall", "role", "username", "email", "firstName", "lastName", "password"]
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "User",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "User",
+    "action": "update:own",
+    "attributes": ["email", "firstName", "lastName", "isActive"]
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "User",
+    "action": "delete:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "CityHall",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Project",
+    "action": "create:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Project",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Project",
+    "action": "update:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Project",
+    "action": "delete:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "RoutePoint",
+    "action": "create:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "RoutePoint",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "RoutePoint",
+    "action": "update:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "RoutePoint",
+    "action": "delete:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Hazard",
+    "action": "create:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Hazard",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Hazard",
+    "action": "update:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Hazard",
+    "action": "delete:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Survey",
+    "action": "create:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Survey",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Survey",
+    "action": "update:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Survey",
+    "action": "delete:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Remark",
+    "action": "create:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Remark",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Remark",
+    "action": "update:own",
+    "attributes": "*"
+  },
+  {
+    "role": "dashboard_user",
+    "resource": "Remark",
+    "action": "delete:own",
+    "attributes": "*"
+  },
+
+  // ===== APP USER PERMISSIONS - Read Only Access =====
+  {
+    "role": "app_user",
+    "resource": "User",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "app_user",
+    "resource": "CityHall",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "app_user",
+    "resource": "Project",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "app_user",
+    "resource": "RoutePoint",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "app_user",
+    "resource": "Hazard",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "app_user",
+    "resource": "Survey",
+    "action": "read:own",
+    "attributes": "*"
+  },
+  {
+    "role": "app_user",
+    "resource": "Remark",
+    "action": "read:own",
     "attributes": "*"
   }
 ]

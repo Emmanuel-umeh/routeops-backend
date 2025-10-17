@@ -116,7 +116,7 @@ class UserCreateInput {
   @Field(() => EnumUserRole, {
     nullable: true,
   })
-  role?: "Option1" | null;
+  role?: "admin" | "dashboard_user" | "app_user" | null;
 
   @ApiProperty({
     required: true,

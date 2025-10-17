@@ -17,6 +17,8 @@ import { IsOptional, ValidateNested } from "class-validator";
 import { StringNullableFilter } from "../../util/StringNullableFilter";
 import { DateTimeNullableFilter } from "../../util/DateTimeNullableFilter";
 import { UserWhereUniqueInput } from "../../user/base/UserWhereUniqueInput";
+import { HazardWhereUniqueInput } from "../../hazard/base/HazardWhereUniqueInput";
+import { SurveyWhereUniqueInput } from "../../survey/base/SurveyWhereUniqueInput";
 
 @InputType()
 class RemarkWhereInput {
@@ -64,6 +66,30 @@ class RemarkWhereInput {
     nullable: true,
   })
   user?: UserWhereUniqueInput;
+
+  @ApiProperty({
+    required: false,
+    type: () => HazardWhereUniqueInput,
+  })
+  @ValidateNested()
+  @Type(() => HazardWhereUniqueInput)
+  @IsOptional()
+  @Field(() => HazardWhereUniqueInput, {
+    nullable: true,
+  })
+  hazard?: HazardWhereUniqueInput;
+
+  @ApiProperty({
+    required: false,
+    type: () => SurveyWhereUniqueInput,
+  })
+  @ValidateNested()
+  @Type(() => SurveyWhereUniqueInput)
+  @IsOptional()
+  @Field(() => SurveyWhereUniqueInput, {
+    nullable: true,
+  })
+  survey?: SurveyWhereUniqueInput;
 }
 
 export { RemarkWhereInput as RemarkWhereInput };

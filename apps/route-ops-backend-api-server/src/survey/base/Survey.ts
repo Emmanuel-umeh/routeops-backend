@@ -20,6 +20,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { Project } from "../../project/base/Project";
+import { Remark } from "../../remark/base/Remark";
 
 @ObjectType()
 class Survey {
@@ -85,6 +86,18 @@ class Survey {
 
   @ApiProperty({
     required: false,
+    type: () => [Remark],
+  })
+  @ValidateNested()
+  @Type(() => Remark)
+  @IsOptional()
+  @Field(() => [Remark], {
+    nullable: true,
+  })
+  remarks?: Remark[] | null;
+
+  @ApiProperty({
+    required: false,
     type: String,
   })
   @IsString()
@@ -93,7 +106,7 @@ class Survey {
   @Field(() => String, {
     nullable: true,
   })
-  remarks!: string | null;
+  remarksText!: string | null;
 
   @ApiProperty({
     required: false,

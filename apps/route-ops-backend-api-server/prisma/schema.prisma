@@ -1,0 +1,118 @@
+datasource db {
+  provider = "mongodb"
+  url      = env("DB_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model CityHall {
+  createdAt   DateTime          @default(now())
+  description String?
+  id          String            @id @default(auto()) @map("_id") @db.ObjectId
+  name        EnumCityHallName?
+  projects    Project[]
+  updatedAt   DateTime          @updatedAt
+  users       User[]
+}
+
+model RoutePoint {
+  createdAt   DateTime @default(now())
+  frameNumber Int?
+  hazards     Hazard[]
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  latitude    Float?
+  longitude   Float?
+  project     Project? @relation(fields: [projectId], references: [id])
+  projectId   String?  @db.ObjectId
+  timestamp   Int?
+  updatedAt   DateTime @updatedAt
+}
+
+model Project {
+  assignedUser String?
+  cityHall     CityHall?          @relation(fields: [cityHallId], references: [id])
+  cityHallId   String?            @db.ObjectId
+  createdAt    DateTime           @default(now())
+  createdBy    String?
+  description  String?
+  hazards      Hazard[]
+  id           String             @id @default(auto()) @map("_id") @db.ObjectId
+  name         String?
+  routePoints  RoutePoint[]
+  status       EnumProjectStatus?
+  surveys      Survey[]
+  updatedAt    DateTime           @updatedAt
+  videoUrl     String?
+}
+
+model Remark {
+  createdAt DateTime  @default(now())
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  text      String?
+  timestamp DateTime?
+  updatedAt DateTime  @updatedAt
+  user      User?     @relation(fields: [userId], references: [id])
+  userId    String?   @db.ObjectId
+}
+
+model Hazard {
+  createdAt    DateTime    @default(now())
+  createdBy    String?
+  description  String?
+  id           String      @id @default(auto()) @map("_id") @db.ObjectId
+  imageUrl     String?
+  latitude     Float?
+  longitude    Float?
+  project      Project?    @relation(fields: [projectId], references: [id])
+  projectId    String?     @db.ObjectId
+  routePoint   RoutePoint? @relation(fields: [routePointId], references: [id])
+  routePointId String?     @db.ObjectId
+  severity     String?
+  typeField    String?
+  updatedAt    DateTime    @updatedAt
+}
+
+model Survey {
+  assignedUser String?
+  createdAt    DateTime  @default(now())
+  endTime      DateTime?
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  name         String?
+  project      Project?  @relation(fields: [projectId], references: [id])
+  projectId    String?   @db.ObjectId
+  remarks      String?
+  startTime    DateTime?
+  status       String?
+  updatedAt    DateTime  @updatedAt
+}
+
+model User {
+  cityHall   CityHall?     @relation(fields: [cityHallId], references: [id])
+  cityHallId String?       @db.ObjectId
+  createdAt  DateTime      @default(now())
+  email      String?       @unique
+  firstName  String?
+  id         String        @id @default(auto()) @map("_id") @db.ObjectId
+  isActive   Boolean?
+  lastName   String?
+  password   String
+  remarks    Remark[]
+  role       EnumUserRole?
+  roles      Json
+  updatedAt  DateTime      @updatedAt
+  username   String        @unique
+}
+
+enum EnumCityHallName {
+  Option1
+}
+
+enum EnumProjectStatus {
+  Option1
+}
+
+enum EnumUserRole {
+  Option1
+}

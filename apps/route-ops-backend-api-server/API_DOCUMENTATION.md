@@ -141,10 +141,13 @@ curl -X POST http://localhost:3000/login \
 **Response:** Array of app users
 
 ### **POST /users/create-with-role**
-**Description:** Create user with role-based validation
+**Description:** Create user with role-based validation (passwords are automatically hashed)
 **Headers:** `Authorization: Bearer <token>`
 **Request Body:** Same as POST /users
 **Response:** Created user with role validation
+**Notes:** 
+- Passwords are automatically hashed using bcrypt
+- Users can login immediately after creation
 
 ### **GET /users/by-city-hall/:cityHallId**
 **Description:** Get users by city hall
@@ -156,6 +159,55 @@ curl -X POST http://localhost:3000/login \
 **Headers:** `Authorization: Bearer <token>`
 **Query Parameters:** `role`, `cityHallId`
 **Response:** Filtered array of users based on role permissions
+
+### **GET /users/profile**
+**Description:** Get current user profile with city hall information
+**Headers:** `Authorization: Bearer <token>`
+**Response:** Current user profile with city hall info
+```json
+{
+  "id": "string",
+  "username": "string",
+  "email": "string | null",
+  "firstName": "string | null",
+  "lastName": "string | null",
+  "role": "admin | dashboard_user | app_user | null",
+  "roles": "object",
+  "isActive": "boolean | null",
+  "cityHall": {
+    "id": "string",
+    "name": "string | null",
+    "description": "string | null"
+  },
+  "createdAt": "string (ISO date)",
+  "updatedAt": "string (ISO date)"
+}
+```
+
+### **GET /users/by-role/:role**
+**Description:** Get users by specific role (Admin only)
+**Headers:** `Authorization: Bearer <token>`
+**Path Parameters:** `role` (admin, dashboard_user, app_user)
+**Response:** Array of users with the specified role
+
+### **PATCH /users/:id/city-hall**
+**Description:** Update user city hall assignment (Admin only)
+**Headers:** `Authorization: Bearer <token>`
+**Request Body:**
+```json
+{
+  "cityHallId": "string"
+}
+```
+**Response:** Updated user with new city hall assignment
+
+### **GET /users/dashboard/city-hall**
+**Description:** Get dashboard user's city hall information (or all city halls for admin)
+**Headers:** `Authorization: Bearer <token>`
+**Response:** 
+- **Dashboard User**: Single city hall object
+- **Admin (no city hall)**: All available city halls with message
+- **Admin (with city hall)**: Single city hall object
 
 ---
 
@@ -205,6 +257,11 @@ curl -X POST http://localhost:3000/login \
 **Description:** Delete city hall
 **Headers:** `Authorization: Bearer <token>`
 **Response:** Deleted city hall object
+
+### **GET /cityHalls/available**
+**Description:** Get available city halls for dropdown (Admin only)
+**Headers:** `Authorization: Bearer <token>`
+**Response:** List of available city halls ordered by name
 
 ---
 

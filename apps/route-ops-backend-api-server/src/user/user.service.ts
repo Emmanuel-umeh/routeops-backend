@@ -80,7 +80,10 @@ export class UserService extends UserServiceBase {
     }
 
     return this.prisma.user.create({
-      data,
+      data: {
+        ...data,
+        password: await this.passwordService.hash(data.password),
+      },
       include: {
         cityHall: true,
       },

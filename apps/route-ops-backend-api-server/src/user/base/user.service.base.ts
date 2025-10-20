@@ -32,10 +32,22 @@ export class UserServiceBase {
   }
 
   async users(args: Prisma.UserFindManyArgs): Promise<PrismaUser[]> {
-    return this.prisma.user.findMany(args);
+    const results = await this.prisma.user.findMany(args);
+    // Add entity alias to all results
+    return results.map(result => {
+      if (result.cityHallId && (result as any).cityHall) {
+        (result as any).entity = (result as any).cityHall;
+      }
+      return result;
+    });
   }
   async user(args: Prisma.UserFindUniqueArgs): Promise<PrismaUser | null> {
-    return this.prisma.user.findUnique(args);
+    const result = await this.prisma.user.findUnique(args);
+    if (result && result.cityHallId && (result as any).cityHall) {
+      // Add entity alias
+      (result as any).entity = (result as any).cityHall;
+    }
+    return result;
   }
   async createUser(args: Prisma.UserCreateArgs): Promise<PrismaUser> {
     return this.prisma.user.create({

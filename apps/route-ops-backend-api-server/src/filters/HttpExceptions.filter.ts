@@ -55,9 +55,15 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
       if (exception.code === "P2002") {
         // Handling Unique Key Constraint Violation Error
         const fields = (exception.meta as { target: string[] }).target;
-        message = `Another record with the requested (${fields.join(
-          ", "
-        )}) already exists`;
+        if (fields.includes("username")) {
+          message = "A user with this username already exists. Please choose a different username.";
+        } else if (fields.includes("email")) {
+          message = "A user with this email address already exists. Please use a different email.";
+        } else {
+          message = `Another record with the requested (${fields.join(
+            ", "
+          )}) already exists`;
+        }
       } else {
         message =
           `[${exception.code}]: ` +

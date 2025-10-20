@@ -21,7 +21,7 @@
 ## **1. Authentication Endpoints**
 
 ### **POST /login**
-**Description:** Authenticate user and get access token
+**Description:** Authenticate user and get access token (blocks disabled users)
 **Request Body:**
 ```json
 {
@@ -38,11 +38,60 @@
   "accessToken": "string"
 }
 ```
+**Error Responses:**
+- `401`: "The passed credentials are incorrect"
+- `401`: "Your account has been disabled. Please contact your administrator." (when isActive=false)
 **Example:**
 ```bash
 curl -X POST http://localhost:3000/login \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "password123"}'
+```
+
+### **POST /forgot-password**
+**Description:** Request password reset
+**Request Body:**
+```json
+{
+  "usernameOrEmail": "string"
+}
+```
+**Response:**
+```json
+{
+  "message": "If an account with that username or email exists, password reset instructions have been sent.",
+  "resetToken": "string" // Only in development mode
+}
+```
+**Example:**
+```bash
+curl -X POST http://localhost:3000/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{"usernameOrEmail": "admin"}'
+```
+
+### **POST /reset-password**
+**Description:** Reset password with token
+**Request Body:**
+```json
+{
+  "token": "string",
+  "newPassword": "string"
+}
+```
+**Response:**
+```json
+{
+  "message": "Password has been reset successfully"
+}
+```
+**Error Responses:**
+- `400`: "Invalid or expired reset token"
+**Example:**
+```bash
+curl -X POST http://localhost:3000/reset-password \
+  -H "Content-Type: application/json" \
+  -d '{"token": "abc123def456", "newPassword": "newpassword123"}'
 ```
 
 ### **GET /userInfo** (Current User Profile)
@@ -82,13 +131,23 @@ curl -X POST http://localhost:3000/login \
     "roles": "object",
     "isActive": "boolean | null",
     "cityHall": {
-      "id": "string"
+      "id": "string",
+      "name": "string | null",
+      "description": "string | null"
+    },
+    "entity": {
+      "id": "string",
+      "name": "string | null", 
+      "description": "string | null"
     },
     "createdAt": "string (ISO date)",
     "updatedAt": "string (ISO date)"
   }
 ]
 ```
+**Notes:**
+- `entity` is an alias for `cityHall` - same data, different name for frontend
+- `isActive: false` blocks user login
 
 ### **GET /users/:id**
 **Description:** Get single user by ID
@@ -744,6 +803,24 @@ curl -X POST http://localhost:3000/login \
   "statusCode": 401,
   "message": "The passed credentials are incorrect",
   "error": "Unauthorized"
+}
+```
+
+### **Account Disabled Error:**
+```json
+{
+  "statusCode": 401,
+  "message": "Your account has been disabled. Please contact your administrator.",
+  "error": "Unauthorized"
+}
+```
+
+### **Duplicate Username/Email Errors:**
+```json
+{
+  "statusCode": 409,
+  "message": "A user with this username already exists. Please choose a different username.",
+  "error": "Conflict"
 }
 ```
 

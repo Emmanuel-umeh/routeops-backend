@@ -25,15 +25,15 @@ export class UserController extends UserControllerBase {
    * Get current user profile with city hall information
    */
   @common.Get("profile")
-  @swagger.ApiOperation({ 
+  @swagger.ApiOperation({
     summary: "Get current user profile",
     description: "Returns the current authenticated user's profile with city hall information"
   })
-  @swagger.ApiOkResponse({ 
+  @swagger.ApiOkResponse({
     type: User,
     description: "Current user profile with city hall info"
   })
-  @swagger.ApiForbiddenResponse({ 
+  @swagger.ApiForbiddenResponse({
     description: "Insufficient permissions"
   })
   @nestAccessControl.UseRoles({
@@ -90,7 +90,7 @@ export class UserController extends UserControllerBase {
     if (!userInfo.roles.includes("admin")) {
       throw new common.ForbiddenException("Only admin can view dashboard users");
     }
-    
+
     return this.service.getDashboardUsers();
   }
 
@@ -253,15 +253,15 @@ export class UserController extends UserControllerBase {
    * Get users by specific role (Admin only)
    */
   @common.Get("by-role/:role")
-  @swagger.ApiOperation({ 
+  @swagger.ApiOperation({
     summary: "Get users by role",
     description: "Get all users with a specific role (Admin only)"
   })
-  @swagger.ApiOkResponse({ 
+  @swagger.ApiOkResponse({
     type: [User],
     description: "List of users with the specified role"
   })
-  @swagger.ApiForbiddenResponse({ 
+  @swagger.ApiForbiddenResponse({
     description: "Insufficient permissions - Admin only"
   })
   @nestAccessControl.UseRoles({
@@ -296,18 +296,18 @@ export class UserController extends UserControllerBase {
    * Update user city hall assignment (Admin only)
    */
   @common.Patch(":id/city-hall")
-  @swagger.ApiOperation({ 
+  @swagger.ApiOperation({
     summary: "Update user city hall assignment",
     description: "Update a user's city hall assignment (Admin only)"
   })
-  @swagger.ApiOkResponse({ 
+  @swagger.ApiOkResponse({
     type: User,
     description: "Updated user with new city hall assignment"
   })
-  @swagger.ApiForbiddenResponse({ 
+  @swagger.ApiForbiddenResponse({
     description: "Insufficient permissions - Admin only"
   })
-  @swagger.ApiBadRequestResponse({ 
+  @swagger.ApiBadRequestResponse({
     description: "Invalid city hall ID or user not found"
   })
   @nestAccessControl.UseRoles({
@@ -374,18 +374,97 @@ export class UserController extends UserControllerBase {
   }
 
   /**
+   * Update user with proper handling of cityHallId and roles
+   */
+  @common.Patch(":id/update")
+  @swagger.ApiOperation({
+    summary: "Update user with cityHallId and roles support",
+    description: "Updates a user with proper handling of cityHallId (converts to cityHall object) and roles array"
+  })
+  @swagger.ApiOkResponse({
+    type: User,
+    description: "Updated user object"
+  })
+  @swagger.ApiNotFoundResponse({
+    description: "User not found"
+  })
+  @swagger.ApiForbiddenResponse({
+    description: "Insufficient permissions"
+  })
+  @nestAccessControl.UseRoles({
+    resource: "User",
+    action: "update",
+    possession: "any",
+  })
+  async updateUserWithCityHall(
+    @common.Param("id") userId: string,
+    @common.Body() data: any,
+    @UserData() userInfo: UserInfo
+  ) {
+    // Only admin can update users
+    if (!userInfo.roles.includes("admin")) {
+      throw new common.ForbiddenException("Only admin can update users");
+    }
+    // Convert cityHallId to cityHall object if provided
+    const updateData: any = {
+      ...data,
+      password: data.password?.length ? data.password : undefined
+    };
+
+
+
+    console.log({updateData})
+    if (data.cityHallId) {
+      updateData.cityHall = {
+        connect: { id: data.cityHallId }
+      };
+      delete updateData.cityHallId;
+    }
+
+    // Handle roles array
+    if (data.roles && Array.isArray(data.roles)) {
+      updateData.roles = data.roles;
+    }
+
+
+    return this.service.updateUser({
+      where: { id: userId },
+      data: updateData,
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        roles: true,
+        isActive: true,
+        cityHall: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+          },
+        },
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  /**
    * Get dashboard user's city hall information
    */
   @common.Get("dashboard/city-hall")
-  @swagger.ApiOperation({ 
+  @swagger.ApiOperation({
     summary: "Get dashboard user's city hall info",
     description: "Get the city hall information for the current dashboard user"
   })
-  @swagger.ApiOkResponse({ 
+  @swagger.ApiOkResponse({
     type: Object,
     description: "City hall information for the dashboard user"
   })
-  @swagger.ApiForbiddenResponse({ 
+  @swagger.ApiForbiddenResponse({
     description: "Insufficient permissions - Dashboard users only"
   })
   @nestAccessControl.UseRoles({

@@ -18,6 +18,8 @@
     "test-admin-access": "ts-node scripts/testAdminAccess.ts",
     "test-password-hashing": "ts-node scripts/testPasswordHashing.ts",
     "test-password-direct": "ts-node scripts/testPasswordHashingDirect.ts",
+    "test-user-update": "ts-node scripts/testUserUpdate.ts",
+    "test-password-update": "ts-node scripts/testPasswordUpdate.ts",
     "db:migrate-save": "prisma migrate dev",
     "db:migrate-up": "prisma migrate deploy",
     "db:clean": "prisma migrate reset",

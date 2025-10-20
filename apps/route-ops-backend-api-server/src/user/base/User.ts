@@ -40,6 +40,16 @@ class User {
   cityHall?: CityHall | null;
 
   @ApiProperty({
+    required: false,
+    type: () => CityHall,
+    description: "Alias for cityHall - same data, different name for frontend"
+  })
+  @ValidateNested()
+  @Type(() => CityHall)
+  @IsOptional()
+  entity?: CityHall | null;
+
+  @ApiProperty({
     required: true,
   })
   @IsDate()

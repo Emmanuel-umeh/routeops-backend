@@ -15,6 +15,7 @@ import { ConfigModule } from "@nestjs/config";
 
 import { ACLModule } from "./auth/acl.module";
 import { AuthModule } from "./auth/auth.module";
+import { MobileModule } from "./mobile/mobile.module";
 
 @Module({
   controllers: [],
@@ -28,6 +29,7 @@ import { AuthModule } from "./auth/auth.module";
     HazardModule,
     SurveyModule,
     UserModule,
+    MobileModule,
     HealthModule,
     PrismaModule,
     SecretsManagerModule,

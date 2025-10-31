@@ -1,6 +1,6 @@
 datasource db {
-  provider = "mongodb"
-  url      = "mongodb+srv://routeops:routeops12345@cluster0.e3gp8ui.mongodb.net/routeops-dev?retryWrites=true&w=majority&appName=Cluster0"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -8,12 +8,12 @@ generator client {
 }
 
 model CityHall {
-  createdAt   DateTime          @default(now())
+  createdAt   DateTime  @default(now())
   description String?
-  id          String            @id @default(auto()) @map("_id") @db.ObjectId
+  id          String    @id @default(uuid())
   name        String?
   projects    Project[]
-  updatedAt   DateTime          @updatedAt
+  updatedAt   DateTime  @updatedAt
   users       User[]
 }
 
@@ -21,11 +21,11 @@ model RoutePoint {
   createdAt   DateTime @default(now())
   frameNumber Int?
   hazards     Hazard[]
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  id          String   @id @default(uuid())
   latitude    Float?
   longitude   Float?
   project     Project? @relation(fields: [projectId], references: [id])
-  projectId   String?  @db.ObjectId
+  projectId   String?
   timestamp   Int?
   updatedAt   DateTime @updatedAt
 }
@@ -33,12 +33,12 @@ model RoutePoint {
 model Project {
   assignedUser String?
   cityHall     CityHall?          @relation(fields: [cityHallId], references: [id])
-  cityHallId   String?            @db.ObjectId
+  cityHallId   String?
   createdAt    DateTime           @default(now())
   createdBy    String?
   description  String?
   hazards      Hazard[]
-  id           String             @id @default(auto()) @map("_id") @db.ObjectId
+  id           String             @id @default(uuid())
   name         String?
   routePoints  RoutePoint[]
   status       EnumProjectStatus?
@@ -50,30 +50,30 @@ model Project {
 model Remark {
   createdAt DateTime  @default(now())
   hazard    Hazard?   @relation(fields: [hazardId], references: [id])
-  hazardId  String?   @db.ObjectId
-  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  hazardId  String?
+  id        String    @id @default(uuid())
   survey    Survey?   @relation(fields: [surveyId], references: [id])
-  surveyId  String?   @db.ObjectId
+  surveyId  String?
   text      String?
   timestamp DateTime?
   updatedAt DateTime  @updatedAt
   user      User?     @relation(fields: [userId], references: [id])
-  userId    String?   @db.ObjectId
+  userId    String?
 }
 
 model Hazard {
   createdAt    DateTime    @default(now())
   createdBy    String?
   description  String?
-  id           String      @id @default(auto()) @map("_id") @db.ObjectId
+  id           String      @id @default(uuid())
   imageUrl     String?
   latitude     Float?
   longitude    Float?
   project      Project?    @relation(fields: [projectId], references: [id])
-  projectId    String?     @db.ObjectId
+  projectId    String?
   remarks      Remark[]
   routePoint   RoutePoint? @relation(fields: [routePointId], references: [id])
-  routePointId String?     @db.ObjectId
+  routePointId String?
   severity     String?
   typeField    String?
   updatedAt    DateTime    @updatedAt
@@ -83,24 +83,31 @@ model Survey {
   assignedUser String?
   createdAt    DateTime  @default(now())
   endTime      DateTime?
-  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  id           String    @id @default(uuid())
   name         String?
   project      Project?  @relation(fields: [projectId], references: [id])
-  projectId    String?   @db.ObjectId
+  projectId    String?
   remarks      Remark[]
   remarksText  String?
   startTime    DateTime?
   status       String?
+  // Geometry for Google Maps (GeoJSON LineString/MultiLineString)
+  geometryJson Json?
+  // Bounding box [minLng, minLat, maxLng, maxLat]
+  bbox         Json?
+  // Aggregates for dashboard
+  eIriAvg      Float?
+  lengthMeters Float?
   updatedAt    DateTime  @updatedAt
 }
 
 model User {
   cityHall   CityHall?     @relation(fields: [cityHallId], references: [id])
-  cityHallId String?       @db.ObjectId
+  cityHallId String?
   createdAt  DateTime      @default(now())
   email      String?       @unique
   firstName  String?
-  id         String        @id @default(auto()) @map("_id") @db.ObjectId
+  id         String        @id @default(uuid())
   isActive   Boolean?
   lastName   String?
   password   String

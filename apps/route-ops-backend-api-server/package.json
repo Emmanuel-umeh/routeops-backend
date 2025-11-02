@@ -27,6 +27,7 @@
     "prisma:generate": "prisma generate",
     "db:migrate-dev": "prisma migrate dev --name init_pg",
     "seed:geo-demo": "ts-node scripts/seedGeoDemo.ts",
+    "seed:test": "ts-node scripts/seedTestData.ts",
     "docker:dev": "docker-compose -f docker-compose.dev.yml up -d",
     "package:container": "docker build .",
     "compose:up": "docker-compose up -d",

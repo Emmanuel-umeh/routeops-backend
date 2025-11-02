@@ -8,6 +8,8 @@ generator client {
 }
 
 model CityHall {
+  allowImages Boolean   @default(true)
+  allowVideo  Boolean   @default(true)
   createdAt   DateTime  @default(now())
   description String?
   id          String    @id @default(uuid())

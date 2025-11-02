@@ -121,6 +121,21 @@ export class ProjectControllerBase {
         status: true,
         updatedAt: true,
         videoUrl: true,
+        surveys: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            startTime: true,
+            endTime: true,
+            geometryJson: true,
+            bbox: true,
+            eIriAvg: true,
+            lengthMeters: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
       },
     });
   }
@@ -159,6 +174,42 @@ export class ProjectControllerBase {
         status: true,
         updatedAt: true,
         videoUrl: true,
+        surveys: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            startTime: true,
+            endTime: true,
+            geometryJson: true,
+            bbox: true,
+            eIriAvg: true,
+            lengthMeters: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+        routePoints: {
+          select: {
+            id: true,
+            latitude: true,
+            longitude: true,
+            frameNumber: true,
+            timestamp: true,
+          },
+        },
+        hazards: {
+          select: {
+            id: true,
+            typeField: true,
+            severity: true,
+            description: true,
+            latitude: true,
+            longitude: true,
+            imageUrl: true,
+            createdAt: true,
+          },
+        },
       },
     });
     if (result === null) {

@@ -132,6 +132,52 @@ class Survey {
   status!: string | null;
 
   @ApiProperty({
+    required: false,
+    description: "GeoJSON LineString or MultiLineString geometry for map display",
+    example: { type: "LineString", coordinates: [[-9.1393, 38.7223], [-9.1400, 38.7230]] },
+  })
+  @IsOptional()
+  @Field(() => Object, {
+    nullable: true,
+  })
+  geometryJson!: any | null;
+
+  @ApiProperty({
+    required: false,
+    description: "Bounding box [minLng, minLat, maxLng, maxLat]",
+    example: [-9.1400, 38.7223, -9.1393, 38.7230],
+  })
+  @IsOptional()
+  @Field(() => Object, {
+    nullable: true,
+  })
+  bbox!: any | null;
+
+  @ApiProperty({
+    required: false,
+    description: "Average eIRI (International Roughness Index) value",
+    example: 2.5,
+    type: Number,
+  })
+  @IsOptional()
+  @Field(() => Number, {
+    nullable: true,
+  })
+  eIriAvg!: number | null;
+
+  @ApiProperty({
+    required: false,
+    description: "Length of the survey in meters",
+    example: 1250.5,
+    type: Number,
+  })
+  @IsOptional()
+  @Field(() => Number, {
+    nullable: true,
+  })
+  lengthMeters!: number | null;
+
+  @ApiProperty({
     required: true,
   })
   @IsDate()

@@ -424,13 +424,27 @@ async function main() {
 
   console.log("✅ Created project 5 (Porto):", project5.name);
 
+  // Project 6: Pending project (for testing dashboard)
+  const project6 = await prisma.project.create({
+    data: {
+      name: "Rua do Comércio Inspection - Pending",
+      description: "Pending road inspection project - scheduled for next week",
+      status: "pending",
+      createdBy: dashboardUser.id,
+      cityHallId: entity1.id,
+    },
+  });
+
+  console.log("✅ Created project 6 (Pending):", project6.name);
+
   console.log("\n🎉 Test data seeded successfully!");
   console.log("\n📊 Summary:");
   console.log(`   - Entities: ${entity1.name}, ${entity2.name}`);
   console.log(`   - Users: admin, dashboard_user, app_user (password: password123)`);
-  console.log(`   - Projects: 5 total (all with surveys)`);
+  console.log(`   - Projects: 6 total`);
   console.log(`     * 4 completed projects with surveys (Green, Yellow, Red eIRI)`);
   console.log(`     * 1 active project with survey (mobile app)`);
+  console.log(`     * 1 pending project (for testing)`);
   console.log(`     * 1 Porto entity project`);
   console.log(`   - Surveys: 5 with geometry data`);
   console.log(`   - Hazards: 9 total`);

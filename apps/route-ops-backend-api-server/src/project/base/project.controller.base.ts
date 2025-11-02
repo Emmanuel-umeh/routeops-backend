@@ -19,6 +19,7 @@ import { ApiNestedQuery } from "../../decorators/api-nested-query.decorator";
 import * as nestAccessControl from "nest-access-control";
 import * as defaultAuthGuard from "../../auth/defaultAuth.guard";
 import { ProjectService } from "../project.service";
+import { PrismaService } from "../../prisma/prisma.service";
 import { AclValidateRequestInterceptor } from "../../interceptors/aclValidateRequest.interceptor";
 import { AclFilterResponseInterceptor } from "../../interceptors/aclFilterResponse.interceptor";
 import { ProjectCreateInput } from "./ProjectCreateInput";
@@ -41,7 +42,8 @@ import { SurveyWhereUniqueInput } from "../../survey/base/SurveyWhereUniqueInput
 export class ProjectControllerBase {
   constructor(
     protected readonly service: ProjectService,
-    protected readonly rolesBuilder: nestAccessControl.RolesBuilder
+    protected readonly rolesBuilder: nestAccessControl.RolesBuilder,
+    protected readonly prisma: PrismaService
   ) {}
   @common.UseInterceptors(AclValidateRequestInterceptor)
   @common.Post()
@@ -100,16 +102,29 @@ export class ProjectControllerBase {
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,
   })
-  async projects(@common.Req() request: Request): Promise<Project[]> {
+  async projects(@common.Req() request: Request): Promise<any[]> {
     const args = plainToClass(ProjectFindManyArgs, request.query);
-    return this.service.projects({
+    
+    // Ensure no status filter unless explicitly provided (return all projects)
+    // Add default sorting by createdAt descending (newest first) if no orderBy specified
+    const projects = await this.service.projects({
       ...args,
+      // Remove any default status filtering - return all projects unless explicitly filtered
+      where: args.where,
+      // Default to newest first if no orderBy is specified
+      orderBy: args.orderBy || [{ createdAt: 'desc' }],
       select: {
         assignedUser: true,
 
         cityHall: {
           select: {
             id: true,
+            name: true,
+            description: true,
+            allowVideo: true,
+            allowImages: true,
+            createdAt: true,
+            updatedAt: true,
           },
         },
 
@@ -136,8 +151,59 @@ export class ProjectControllerBase {
             updatedAt: true,
           },
         },
+        routePoints: {
+          select: {
+            id: true,
+            latitude: true,
+            longitude: true,
+            timestamp: true,
+            frameNumber: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+        hazards: {
+          select: {
+            id: true,
+            latitude: true,
+            longitude: true,
+            description: true,
+            severity: true,
+            typeField: true,
+            imageUrl: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
       },
     });
+
+    // Fetch user details for createdBy and assignedUser
+    const userIds = new Set<string>();
+    projects.forEach((project: any) => {
+      if (project.createdBy) userIds.add(project.createdBy);
+      if (project.assignedUser) userIds.add(project.assignedUser);
+    });
+
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: Array.from(userIds) } },
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+      },
+    });
+
+    const userMap = new Map(users.map(u => [u.id, u]));
+
+    // Enrich projects with user information
+    return projects.map((project: any) => ({
+      ...project,
+      createdByUser: project.createdBy ? userMap.get(project.createdBy) || null : null,
+      assignedUserInfo: project.assignedUser ? userMap.get(project.assignedUser) || null : null,
+    }));
   }
 
   @common.UseInterceptors(AclFilterResponseInterceptor)
@@ -154,7 +220,7 @@ export class ProjectControllerBase {
   })
   async project(
     @common.Param() params: ProjectWhereUniqueInput
-  ): Promise<Project | null> {
+  ): Promise<any | null> {
     const result = await this.service.project({
       where: params,
       select: {
@@ -163,6 +229,12 @@ export class ProjectControllerBase {
         cityHall: {
           select: {
             id: true,
+            name: true,
+            description: true,
+            allowVideo: true,
+            allowImages: true,
+            createdAt: true,
+            updatedAt: true,
           },
         },
 
@@ -196,6 +268,8 @@ export class ProjectControllerBase {
             longitude: true,
             frameNumber: true,
             timestamp: true,
+            createdAt: true,
+            updatedAt: true,
           },
         },
         hazards: {
@@ -208,6 +282,7 @@ export class ProjectControllerBase {
             longitude: true,
             imageUrl: true,
             createdAt: true,
+            updatedAt: true,
           },
         },
       },
@@ -217,7 +292,37 @@ export class ProjectControllerBase {
         `No resource was found for ${JSON.stringify(params)}`
       );
     }
-    return result;
+
+    // Fetch user details for createdBy and assignedUser
+    const userIds: string[] = [];
+    if ((result as any).createdBy) userIds.push((result as any).createdBy);
+    if ((result as any).assignedUser) userIds.push((result as any).assignedUser);
+
+    let createdByUser = null;
+    let assignedUserInfo = null;
+
+    if (userIds.length > 0) {
+      const users = await this.prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: {
+          id: true,
+          username: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+        },
+      });
+
+      const userMap = new Map(users.map(u => [u.id, u]));
+      createdByUser = (result as any).createdBy ? userMap.get((result as any).createdBy) || null : null;
+      assignedUserInfo = (result as any).assignedUser ? userMap.get((result as any).assignedUser) || null : null;
+    }
+
+    return {
+      ...result,
+      createdByUser,
+      assignedUserInfo,
+    };
   }
 
   @common.UseInterceptors(AclValidateRequestInterceptor)

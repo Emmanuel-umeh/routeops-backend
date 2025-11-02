@@ -3,6 +3,7 @@ import * as swagger from "@nestjs/swagger";
 import * as nestAccessControl from "nest-access-control";
 import { ProjectService } from "./project.service";
 import { ProjectControllerBase } from "./base/project.controller.base";
+import { PrismaService } from "../prisma/prisma.service";
 import { CreateProjectDto } from "./dto/CreateProjectDto";
 import { Project } from "./base/Project";
 import { ProjectCreateInput } from "./base/ProjectCreateInput";
@@ -13,9 +14,10 @@ export class ProjectController extends ProjectControllerBase {
   constructor(
     protected readonly service: ProjectService,
     @nestAccessControl.InjectRolesBuilder()
-    protected readonly rolesBuilder: nestAccessControl.RolesBuilder
+    protected readonly rolesBuilder: nestAccessControl.RolesBuilder,
+    protected readonly prisma: PrismaService
   ) {
-    super(service, rolesBuilder);
+    super(service, rolesBuilder, prisma);
   }
 
   @common.Post()

@@ -6,8 +6,11 @@ import { UserInfo } from "../auth/UserInfo";
 import { StartProjectDto } from "./dto/StartProjectDto";
 import { EndProjectDto } from "./dto/EndProjectDto";
 import { UploadAttachmentsDto } from "./dto/UploadAttachmentsDto";
+import * as defaultAuthGuard from "../auth/defaultAuth.guard";
 
 @swagger.ApiTags("mobile")
+@swagger.ApiBearerAuth()
+@common.UseGuards(defaultAuthGuard.DefaultAuthGuard)
 @common.Controller("mobile")
 export class MobileController {
   constructor(private readonly service: MobileService) {}

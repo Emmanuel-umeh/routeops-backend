@@ -79,9 +79,12 @@ export class UserService extends UserServiceBase {
       throw new Error("App users cannot create other users");
     }
 
+    // Final payload normalization: remove forbidden scalar FK if present
+    const { /* eslint-disable @typescript-eslint/no-unused-vars */ cityHallId, ...normalized } = (data as any) || {};
+
     return this.prisma.user.create({
       data: {
-        ...data,
+        ...(normalized),
         password: await this.passwordService.hash(data.password),
       },
       include: {

@@ -73,7 +73,9 @@ export class UserController extends UserControllerBase {
   }
 
   /**
-   * Get dashboard users (Admin only)
+   * Get dashboard users
+   * - Admin: all dashboard users
+   * - Dashboard user: only users from own city hall
    */
   @common.Get("dashboard-users")
   @swagger.ApiOkResponse({ type: [Object] })
@@ -86,12 +88,21 @@ export class UserController extends UserControllerBase {
     type: common.ForbiddenException,
   })
   async getDashboardUsers(@UserData() userInfo: UserInfo) {
-    // Only admin can access this endpoint
-    if (!userInfo.roles.includes("admin")) {
-      throw new common.ForbiddenException("Only admin can view dashboard users");
+    if (userInfo.roles.includes("admin")) {
+      return this.service.getDashboardUsers();
     }
-
-    return this.service.getDashboardUsers();
+    if (userInfo.roles.includes("dashboard_user")) {
+      const me = await this.prisma.user.findUnique({
+        where: { id: userInfo.id },
+        select: { cityHallId: true },
+      });
+      if (!me?.cityHallId) return [];
+      return this.prisma.user.findMany({
+        where: { role: "dashboard_user", cityHallId: me.cityHallId },
+        include: { cityHall: true },
+      });
+    }
+    throw new common.ForbiddenException("Insufficient permissions");
   }
 
   /**
@@ -139,7 +150,7 @@ export class UserController extends UserControllerBase {
   @nestAccessControl.UseRoles({
     resource: "User",
     action: "create",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: common.ForbiddenException,
@@ -158,14 +169,17 @@ export class UserController extends UserControllerBase {
     const userCityHallId = currentUser?.cityHallId;
 
     try {
+      // If dashboard user didn't provide cityHall, default to their own city hall
+      const cityHallConnect = data.cityHall
+        ? { connect: data.cityHall }
+        : userRole === "dashboard_user" && userCityHallId
+        ? { connect: { id: userCityHallId } }
+        : undefined;
+
       return await this.service.createUserWithRoleValidation(
         {
           ...data,
-          cityHall: data.cityHall
-            ? {
-                connect: data.cityHall,
-              }
-            : undefined,
+          cityHall: cityHallConnect,
         },
         userRole,
         userCityHallId || undefined
@@ -394,38 +408,38 @@ export class UserController extends UserControllerBase {
   @nestAccessControl.UseRoles({
     resource: "User",
     action: "update",
-    possession: "any",
+    possession: "own",
   })
   async updateUserWithCityHall(
     @common.Param("id") userId: string,
     @common.Body() data: any,
     @UserData() userInfo: UserInfo
   ) {
-    // Only admin can update users
-    if (!userInfo.roles.includes("admin")) {
-      throw new common.ForbiddenException("Only admin can update users");
+    const isAdmin = userInfo.roles.includes("admin");
+    const currentUser = await this.service.user({ where: { id: userInfo.id } });
+    const targetUser = await this.service.user({ where: { id: userId } });
+    if (!targetUser) throw new common.NotFoundException("User not found");
+
+    if (!isAdmin) {
+      if (!currentUser?.cityHallId || currentUser.cityHallId !== (targetUser as any).cityHallId) {
+        throw new common.ForbiddenException("Can only update users in your city hall");
+      }
     }
-    // Convert cityHallId to cityHall object if provided
-    const updateData: any = {
-      ...data,
-      password: data.password?.length ? data.password : undefined
-    };
 
-
-
-    console.log({updateData})
-    if (data.cityHallId) {
-      updateData.cityHall = {
-        connect: { id: data.cityHallId }
-      };
+    // Build sanitized update payload
+    const updateData: any = { ...data };
+    if (updateData.cityHallId) {
+      updateData.cityHall = { connect: { id: updateData.cityHallId } };
       delete updateData.cityHallId;
     }
-
-    // Handle roles array
-    if (data.roles && Array.isArray(data.roles)) {
-      updateData.roles = data.roles;
+    if (!isAdmin) {
+      delete updateData.password;
+      delete updateData.role;
+      delete updateData.roles;
+      delete updateData.cityHall;
+    } else {
+      updateData.password = updateData.password?.trim() ? updateData.password : undefined;
     }
-
 
     return this.service.updateUser({
       where: { id: userId },

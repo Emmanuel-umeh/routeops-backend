@@ -32,6 +32,7 @@ import { ProjectWhereUniqueInput } from "../../project/base/ProjectWhereUniqueIn
 import { UserFindManyArgs } from "../../user/base/UserFindManyArgs";
 import { User } from "../../user/base/User";
 import { UserWhereUniqueInput } from "../../user/base/UserWhereUniqueInput";
+import { applyEntityScope } from "../../util/entityScope.util";
 
 @swagger.ApiBearerAuth()
 @common.UseGuards(defaultAuthGuard.DefaultAuthGuard, nestAccessControl.ACGuard)
@@ -73,15 +74,26 @@ export class CityHallControllerBase {
   @nestAccessControl.UseRoles({
     resource: "CityHall",
     action: "read",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,
   })
   async cityHalls(@common.Req() request: Request): Promise<CityHall[]> {
     const args = plainToClass(CityHallFindManyArgs, request.query);
+    
+    // For non-admins, only return their own city hall
+    const authUser = (request as any).user as { id: string; roles: string[] };
+    // For cityHall listing, applyEntityScope returns a where with cityHallId.
+    // Convert that into filtering by CityHall.id when present.
+    const scopedByProjectWhere = await applyEntityScope((this as any).prisma, authUser, args.where as any);
+    const scopedWhere = (scopedByProjectWhere as any)?.cityHallId
+      ? { ...(args.where || {}), id: (scopedByProjectWhere as any).cityHallId }
+      : args.where;
+
     return this.service.cityHalls({
       ...args,
+      where: scopedWhere,
       select: {
         createdAt: true,
         description: true,

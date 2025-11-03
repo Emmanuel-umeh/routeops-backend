@@ -26,6 +26,7 @@ import { Hazard } from "./Hazard";
 import { HazardFindManyArgs } from "./HazardFindManyArgs";
 import { HazardWhereUniqueInput } from "./HazardWhereUniqueInput";
 import { HazardUpdateInput } from "./HazardUpdateInput";
+import { applyHazardEntityScope } from "../../util/entityScope.util";
 
 @swagger.ApiBearerAuth()
 @common.UseGuards(defaultAuthGuard.DefaultAuthGuard, nestAccessControl.ACGuard)
@@ -97,15 +98,21 @@ export class HazardControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Hazard",
     action: "read",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,
   })
   async hazards(@common.Req() request: Request): Promise<Hazard[]> {
     const args = plainToClass(HazardFindManyArgs, request.query);
+    
+    // For non-admins, only hazards within their entity's projects
+    const authUser = (request as any).user as { id: string; roles: string[] };
+    const scopedWhere = await applyHazardEntityScope((this as any).prisma, authUser, args.where as any);
+
     return this.service.hazards({
       ...args,
+      where: scopedWhere,
       select: {
         createdAt: true,
         createdBy: true,

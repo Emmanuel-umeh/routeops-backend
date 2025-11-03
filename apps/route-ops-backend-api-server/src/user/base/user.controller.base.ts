@@ -25,6 +25,7 @@ import { UserCreateInput } from "./UserCreateInput";
 import { User } from "./User";
 import { UserFindManyArgs } from "./UserFindManyArgs";
 import { UserWhereUniqueInput } from "./UserWhereUniqueInput";
+import { applyEntityScope } from "../../util/entityScope.util";
 import { UserUpdateInput } from "./UserUpdateInput";
 import { RemarkFindManyArgs } from "../../remark/base/RemarkFindManyArgs";
 import { Remark } from "../../remark/base/Remark";
@@ -49,16 +50,19 @@ export class UserControllerBase {
     type: errors.ForbiddenException,
   })
   async createUser(@common.Body() data: UserCreateInput): Promise<User> {
-    return await this.service.createUser({
-      data: {
-        ...data,
+    // Normalize relation and remove forbidden scalar FK
+    const payload: any = {
+      ...data,
+      cityHall: data.cityHall
+        ? {
+            connect: data.cityHall,
+          }
+        : undefined,
+    };
+    if (payload.cityHallId) delete payload.cityHallId;
 
-        cityHall: data.cityHall
-          ? {
-              connect: data.cityHall,
-            }
-          : undefined,
-      },
+    return await this.service.createUser({
+      data: payload,
       select: {
         cityHall: {
           select: {
@@ -87,15 +91,20 @@ export class UserControllerBase {
   @nestAccessControl.UseRoles({
     resource: "User",
     action: "read",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,
   })
   async users(@common.Req() request: Request): Promise<User[]> {
     const args = plainToClass(UserFindManyArgs, request.query);
+    
+    const authUser = (request as any).user as { id: string; roles: string[] };
+    const scopedWhere = await applyEntityScope((this as any).prisma, authUser, args.where as any);
+
     return this.service.users({
       ...args,
+      where: scopedWhere,
       select: {
         cityHall: {
           select: {

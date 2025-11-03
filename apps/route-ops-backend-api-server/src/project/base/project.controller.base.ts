@@ -36,6 +36,7 @@ import { RoutePointWhereUniqueInput } from "../../routePoint/base/RoutePointWher
 import { SurveyFindManyArgs } from "../../survey/base/SurveyFindManyArgs";
 import { Survey } from "../../survey/base/Survey";
 import { SurveyWhereUniqueInput } from "../../survey/base/SurveyWhereUniqueInput";
+import { applyEntityScope, isAdminUser } from "../../util/entityScope.util";
 
 @swagger.ApiBearerAuth()
 @common.UseGuards(defaultAuthGuard.DefaultAuthGuard, nestAccessControl.ACGuard)
@@ -97,7 +98,7 @@ export class ProjectControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Project",
     action: "read",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,
@@ -105,12 +106,16 @@ export class ProjectControllerBase {
   async projects(@common.Req() request: Request): Promise<any[]> {
     const args = plainToClass(ProjectFindManyArgs, request.query);
     
+    // Determine requester and scope by cityHall for non-admins
+    const authUser = (request as any).user as { id: string; roles: string[] };
+    const scopedWhere = await applyEntityScope(this.prisma, authUser, args.where as any);
+
     // Ensure no status filter unless explicitly provided (return all projects)
     // Add default sorting by createdAt descending (newest first) if no orderBy specified
     const projects = await this.service.projects({
       ...args,
       // Remove any default status filtering - return all projects unless explicitly filtered
-      where: args.where,
+      where: scopedWhere,
       // Default to newest first if no orderBy is specified
       orderBy: args.orderBy || [{ createdAt: 'desc' }],
       select: {
@@ -221,8 +226,23 @@ export class ProjectControllerBase {
   async project(
     @common.Param() params: ProjectWhereUniqueInput
   ): Promise<any | null> {
+    // Determine requester and scope access for non-admins
+    const request = (arguments[0] as any) as Request | undefined;
+    let whereClause: any = params;
+    try {
+      // attempt to read user from request context
+      // note: in Nest, switchToHttp isn't available here, so rely on interceptor-populated request arg when present
+      const reqUser = (request as any)?.user as { id: string; roles: string[] } | undefined;
+      const isAdmin = isAdminUser(reqUser);
+      if (!isAdmin && reqUser?.id) {
+        whereClause = await applyEntityScope(this.prisma, reqUser, whereClause as any);
+      }
+    } catch (_) {
+      // fall back to unscoped where if user not available
+    }
+
     const result = await this.service.project({
-      where: params,
+      where: whereClause,
       select: {
         assignedUser: true,
 

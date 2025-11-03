@@ -4,6 +4,9 @@ import * as nestAccessControl from "nest-access-control";
 import { CityHallService } from "./cityHall.service";
 import { CityHallControllerBase } from "./base/cityHall.controller.base";
 import { CityHall } from "./base/CityHall";
+import { UserData } from "../auth/userData.decorator";
+import { UserInfo } from "../auth/UserInfo";
+import { PrismaService } from "../prisma/prisma.service";
 
 @swagger.ApiTags("cityHalls")
 @common.Controller("cityHalls")
@@ -11,7 +14,8 @@ export class CityHallController extends CityHallControllerBase {
   constructor(
     protected readonly service: CityHallService,
     @nestAccessControl.InjectRolesBuilder()
-    protected readonly rolesBuilder: nestAccessControl.RolesBuilder
+    protected readonly rolesBuilder: nestAccessControl.RolesBuilder,
+    private readonly prisma: PrismaService
   ) {
     super(service, rolesBuilder);
   }
@@ -22,7 +26,7 @@ export class CityHallController extends CityHallControllerBase {
   @common.Get("available")
   @swagger.ApiOperation({ 
     summary: "Get available city halls for dropdown",
-    description: "Returns all city halls available for user assignment (Admin only)"
+    description: "Returns available city halls. Admin sees all; dashboard users see their own; app users forbidden."
   })
   @swagger.ApiOkResponse({ 
     type: [CityHall],
@@ -36,16 +40,22 @@ export class CityHallController extends CityHallControllerBase {
     action: "read",
     possession: "any",
   })
-  async getAvailableCityHalls(): Promise<CityHall[]> {
-    return this.service.cityHalls({
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-      orderBy: { name: 'asc' },
-    });
+  async getAvailableCityHalls(@UserData() userInfo: UserInfo): Promise<CityHall[]> {
+    if (userInfo.roles.includes("admin")) {
+      return this.service.cityHalls({
+        select: { id: true, name: true, description: true, createdAt: true, updatedAt: true },
+        orderBy: { name: 'asc' },
+      });
+    }
+    if (userInfo.roles.includes("dashboard_user")) {
+      const me = await this.prisma.user.findUnique({ where: { id: userInfo.id }, select: { cityHallId: true } });
+      if (!me?.cityHallId) return [];
+      return this.service.cityHalls({
+        where: { id: me.cityHallId },
+        select: { id: true, name: true, description: true, createdAt: true, updatedAt: true },
+        orderBy: { name: 'asc' },
+      });
+    }
+    throw new common.ForbiddenException("Insufficient permissions");
   }
 }

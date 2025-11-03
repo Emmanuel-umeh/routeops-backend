@@ -454,13 +454,28 @@ export class ProjectControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Hazard",
     action: "read",
-    possession: "any",
+    possession: "own",
   })
   async findHazards(
     @common.Req() request: Request,
     @common.Param() params: ProjectWhereUniqueInput
   ): Promise<Hazard[]> {
     const query = plainToClass(HazardFindManyArgs, request.query);
+    const authUser = (request as any).user as { id: string; roles: string[] };
+    const isAdmin = Array.isArray(authUser?.roles) && authUser.roles.includes("admin");
+    if (!isAdmin) {
+      // Verify the project is within the user's city hall before returning hazards
+      const [project, user] = await Promise.all([
+        this.prisma.project.findUnique({ where: { id: params.id }, select: { cityHallId: true } }),
+        this.prisma.user.findUnique({ where: { id: authUser?.id }, select: { cityHallId: true } }),
+      ]);
+      if (!project) {
+        throw new errors.NotFoundException(`No resource was found for ${JSON.stringify(params)}`);
+      }
+      if (!user?.cityHallId || user.cityHallId !== project.cityHallId) {
+        throw new errors.ForbiddenException("Insufficient privileges to complete the operation");
+      }
+    }
     const results = await this.service.findHazards(params.id, {
       ...query,
       select: {

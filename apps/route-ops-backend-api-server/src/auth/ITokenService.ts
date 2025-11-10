@@ -1,9 +1,22 @@
 export interface ITokenPayload {
   id: string;
   username: string;
-  password: string;
+}
+
+export interface ITokenClaims {
+  sub: string;
+  username: string;
+  tokenType: "access" | "refresh";
+  iat?: number;
+  exp?: number;
 }
 
 export interface ITokenService {
-  createToken: ({ id, username, password }: ITokenPayload) => Promise<string>;
+  /**
+   * @deprecated Use createAccessToken instead.
+   */
+  createToken: (payload: ITokenPayload) => Promise<string>;
+  createAccessToken: (payload: ITokenPayload) => Promise<string>;
+  createRefreshToken: (payload: ITokenPayload) => Promise<string>;
+  verifyRefreshToken: (token: string) => Promise<ITokenClaims>;
 }

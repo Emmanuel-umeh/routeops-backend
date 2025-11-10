@@ -9,6 +9,7 @@ import { ResetPasswordDto } from "./dto/ResetPasswordDto";
 import { ForgotPasswordResponseDto } from "./dto/ForgotPasswordResponseDto";
 import { ResetPasswordResponseDto } from "./dto/ResetPasswordResponseDto";
 import { randomBytes } from "crypto";
+import { CurrentUserResponseDto } from "./dto/CurrentUserResponseDto";
 
 @Injectable()
 export class AuthService {
@@ -37,21 +38,24 @@ export class AuthService {
     return null;
   }
   async login(credentials: Credentials): Promise<UserInfo> {
-    const { username, password } = credentials;
-    const user = await this.validateUser(
-      credentials.username,
-      credentials.password
-    );
+    const { username } = credentials;
+    const user = await this.validateUser(credentials.username, credentials.password);
     if (!user) {
       throw new UnauthorizedException("The passed credentials are incorrect");
     }
-    const accessToken = await this.tokenService.createToken({
-      id: user.id,
-      username,
-      password,
-    });
+    const [accessToken, refreshToken] = await Promise.all([
+      this.tokenService.createAccessToken({
+        id: user.id,
+        username,
+      }),
+      this.tokenService.createRefreshToken({
+        id: user.id,
+        username,
+      }),
+    ]);
     return {
       accessToken,
+      refreshToken,
       ...user,
     };
   }
@@ -143,6 +147,87 @@ export class AuthService {
 
     return {
       message: "Password has been reset successfully"
+    };
+  }
+
+  async refreshToken(refreshToken: string): Promise<UserInfo> {
+    const decoded = await this.tokenService.verifyRefreshToken(refreshToken);
+    const user = await this.userService.user({
+      where: { id: decoded.sub },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException("Invalid refresh token");
+    }
+
+    if (user.isActive === false) {
+      throw new UnauthorizedException("Your account has been disabled. Please contact your administrator.");
+    }
+
+    if (
+      !Array.isArray(user.roles) ||
+      typeof user.roles !== "object" ||
+      user.roles === null
+    ) {
+      throw new Error("User roles is not a valid value");
+    }
+
+    const [accessToken, newRefreshToken] = await Promise.all([
+      this.tokenService.createAccessToken({
+        id: user.id,
+        username: user.username,
+      }),
+      this.tokenService.createRefreshToken({
+        id: user.id,
+        username: user.username,
+      }),
+    ]);
+
+    return {
+      id: user.id,
+      username: user.username,
+      roles: user.roles as string[],
+      accessToken,
+      refreshToken: newRefreshToken,
+    };
+  }
+
+  async getCurrentUser(userId: string): Promise<CurrentUserResponseDto> {
+    const user = await this.userService.user({
+      where: { id: userId },
+      include: {
+        cityHall: true,
+      },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException("User not found");
+    }
+
+    if (
+      !Array.isArray(user.roles) ||
+      typeof user.roles !== "object" ||
+      user.roles === null
+    ) {
+      throw new Error("User roles is not a valid value");
+    }
+
+    if (user.isActive === false) {
+      throw new UnauthorizedException("Your account has been disabled. Please contact your administrator.");
+    }
+
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email ?? null,
+      firstName: user.firstName ?? null,
+      lastName: user.lastName ?? null,
+      roles: user.roles as string[],
+      role: user.role ?? null,
+      cityHall: (user as any).cityHall ?? null,
+      isActive: user.isActive ?? null,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
     };
   }
 }

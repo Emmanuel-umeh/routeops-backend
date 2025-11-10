@@ -9,6 +9,7 @@ export const TEST_USER: UserInfo = {
   username: "ofek",
 };
 export const SIGN_TOKEN = "SIGN_TOKEN";
+export const REFRESH_TOKEN = "REFRESH_TOKEN";
 export const VALID_CREDENTIALS: Credentials = {
   username: "Valid User",
   password: "Valid User Password",

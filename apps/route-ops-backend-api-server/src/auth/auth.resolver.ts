@@ -15,6 +15,13 @@ export class AuthResolver {
     return this.authService.login(args.credentials);
   }
 
+  @Mutation(() => UserInfo)
+  async refreshToken(
+    @Args("refreshToken", { type: () => String }) refreshToken: string
+  ): Promise<UserInfo> {
+    return this.authService.refreshToken(refreshToken);
+  }
+
   @Query(() => UserInfo)
   @common.UseGuards(GqlDefaultAuthGuard, gqlACGuard.GqlACGuard)
   async userInfo(@UserData() entityInfo: UserInfo): Promise<UserInfo> {

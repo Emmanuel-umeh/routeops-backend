@@ -20,7 +20,10 @@ export class JwtStrategyBase
     });
   }
 
-  async validate(payload: UserInfo): Promise<UserInfo> {
+  async validate(payload: UserInfo & { tokenType?: string }): Promise<UserInfo> {
+    if (payload.tokenType !== "access") {
+      throw new UnauthorizedException();
+    }
     const { username } = payload;
     const user = await this.userService.user({
       where: { username },

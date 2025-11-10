@@ -37,6 +37,7 @@ import { SurveyFindManyArgs } from "../../survey/base/SurveyFindManyArgs";
 import { Survey } from "../../survey/base/Survey";
 import { SurveyWhereUniqueInput } from "../../survey/base/SurveyWhereUniqueInput";
 import { applyEntityScope, isAdminUser } from "../../util/entityScope.util";
+import { EnumProjectStatus } from "./EnumProjectStatus";
 
 @swagger.ApiBearerAuth()
 @common.UseGuards(defaultAuthGuard.DefaultAuthGuard, nestAccessControl.ACGuard)
@@ -104,20 +105,23 @@ export class ProjectControllerBase {
     type: errors.ForbiddenException,
   })
   async projects(@common.Req() request: Request): Promise<any[]> {
-    const args = plainToClass(ProjectFindManyArgs, request.query);
-    
+    const { standardQuery, filters } = this.service.parseProjectFilters(
+      request.query as Record<string, unknown>
+    );
+    const args = plainToClass(ProjectFindManyArgs, standardQuery);
+    const argsWithFilters: ProjectFindManyArgs = {
+      ...args,
+      where: this.service.applyProjectFilters(args.where as any, filters),
+    };
+
     // Determine requester and scope by cityHall for non-admins
     const authUser = (request as any).user as { id: string; roles: string[] };
-    const scopedWhere = await applyEntityScope(this.prisma, authUser, args.where as any);
+    const scopedWhere = await applyEntityScope(this.prisma, authUser, argsWithFilters.where as any);
 
-    // Ensure no status filter unless explicitly provided (return all projects)
-    // Add default sorting by createdAt descending (newest first) if no orderBy specified
     const projects = await this.service.projects({
-      ...args,
-      // Remove any default status filtering - return all projects unless explicitly filtered
+      ...argsWithFilters,
       where: scopedWhere,
-      // Default to newest first if no orderBy is specified
-      orderBy: args.orderBy || [{ createdAt: 'desc' }],
+      orderBy: argsWithFilters.orderBy || [{ createdAt: "desc" }],
       select: {
         assignedUser: true,
 
@@ -792,3 +796,4 @@ export class ProjectControllerBase {
     });
   }
 }
+

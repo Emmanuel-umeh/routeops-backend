@@ -40,43 +40,86 @@ function lengthMeters(coords: Coord[]): number {
 }
 
 function makeEiriPath(start: Coord, deltas: Coord[], eiri: number[]): Array<{ coord: Coord; eIri: number }> {
-  const coords: Coord[] = [start];
+  const coords = [start] as Coord[];
   deltas.forEach((d) => coords.push([coords[coords.length - 1][0] + d[0], coords[coords.length - 1][1] + d[1]]));
-  const points = coords.map((coord, i) => ({
+  return coords.map((coord, i) => ({
     coord,
     eIri: eiri[Math.min(i, eiri.length - 1)],
   }));
-  return points;
 }
 
 async function main() {
-  console.log("🧹 Clearing existing data (remarks, hazards, surveys, routePoints, projects)...");
+  console.log("🧹 Clearing existing data (remarks, hazards, surveys, routePoints, projects, users, cityHalls)...");
   await prisma.remark.deleteMany({});
   await prisma.hazard.deleteMany({});
   await prisma.survey.deleteMany({});
   await prisma.routePoint.deleteMany({});
   await prisma.project.deleteMany({});
+  await prisma.user.deleteMany({});
+  await prisma.cityHall.deleteMany({});
+  console.log("✅ All core tables cleared.");
 
-  console.log("✅ Cleared dependent tables.");
+  console.log("🏗️ Seeding base entities and users...");
+  const entityLisbon = await prisma.cityHall.create({
+    data: { name: "Lisbon", description: "Lisbon Municipality", allowImages: true, allowVideo: true },
+  });
+  const entityPorto = await prisma.cityHall.create({
+    data: { name: "Porto", description: "Porto Municipality", allowImages: true, allowVideo: true },
+  });
 
-  // Resolve an existing app user and entity - do not create new users
-  console.log("👤 Resolving existing users/entities (no creation)...");
-  const appUser =
-    (await prisma.user.findUnique({ where: { username: "app_user" } })) ||
-    (await prisma.user.findFirst({ where: { role: "app_user" as any } })) ||
-    (await prisma.user.findFirst());
-  if (!appUser) {
-    throw new Error("No users found. Please create users first (e.g., run your existing user seed).");
-  }
-  const entity =
-    (appUser.cityHallId
-      ? await prisma.cityHall.findUnique({ where: { id: appUser.cityHallId } })
-      : null) || (await prisma.cityHall.findFirst());
-  if (!entity) {
-    console.warn("⚠️ No CityHall found; projects will be seeded without an entity association.");
-  }
+  const { BCRYPT_SALT } = process.env;
+  if (!BCRYPT_SALT) throw new Error("BCRYPT_SALT must be set (used to hash demo user passwords)");
+  const salt = parseSalt(BCRYPT_SALT);
+  const hashed = await hash("password123", salt);
 
-  console.log("✅ Using user:", appUser.username, "entity:", entity?.name ?? "(none)");
+  await prisma.user.create({
+    data: {
+      username: "admin",
+      password: hashed,
+      roles: ["admin"],
+      role: "admin",
+      isActive: true,
+      email: "admin@example.com",
+    },
+  });
+
+  await prisma.user.create({
+    data: {
+      username: "dashboard_user",
+      password: hashed,
+      roles: ["dashboard_user"],
+      role: "dashboard_user",
+      isActive: true,
+      email: "dashboard@example.com",
+      cityHallId: entityLisbon.id,
+    },
+  });
+
+  const appUser = await prisma.user.create({
+    data: {
+      username: "app_user",
+      password: hashed,
+      roles: ["app_user"],
+      role: "app_user",
+      isActive: true,
+      email: "app@example.com",
+      cityHallId: entityLisbon.id,
+    },
+  });
+
+  const appUserPorto = await prisma.user.create({
+    data: {
+      username: "app_porto",
+      password: hashed,
+      roles: ["app_user"],
+      role: "app_user",
+      isActive: true,
+      email: "app.porto@example.com",
+      cityHallId: entityPorto.id,
+    },
+  });
+
+  console.log("✅ Users & CityHalls seeded.");
   console.log("➡️  Seeding projects with FeatureCollection (point-level eIRI)...");
 
   // Project A: Mixed eIRI along a short route in Lisbon
@@ -92,9 +135,9 @@ async function main() {
     [1.8, 2.3, 3.1, 2.6, 1.9, 2.7]
   );
   await seedProjectWithSurvey({
-    name: "Figma Demo Route A",
+    name: "Figma Demo Route A (Lisbon)",
     userId: appUser.id,
-    entityId: entity?.id ?? null,
+    entityId: entityLisbon.id,
     points: aPoints,
   });
 
@@ -111,9 +154,9 @@ async function main() {
     [1.6, 1.7, 4.2, 1.8, 1.7, 1.6]
   );
   await seedProjectWithSurvey({
-    name: "Figma Demo Route B",
+    name: "Figma Demo Route B (Lisbon)",
     userId: appUser.id,
-    entityId: entity?.id ?? null,
+    entityId: entityLisbon.id,
     points: bPoints,
   });
 
@@ -129,14 +172,36 @@ async function main() {
     [2.3, 2.6, 2.8, 2.4, 2.5]
   );
   await seedProjectWithSurvey({
-    name: "Figma Demo Route C",
+    name: "Figma Demo Route C (Lisbon)",
     userId: appUser.id,
-    entityId: entity?.id ?? null,
+    entityId: entityLisbon.id,
     points: cPoints,
   });
 
+  // Project D: Porto example to validate city-hall scoping
+  const dPoints = makeEiriPath(
+    [-8.6291, 41.1579],
+    [
+      [0.0006, 0.0004],
+      [0.0006, 0.0004],
+      [0.0006, 0.0004],
+      [0.0006, 0.0004],
+    ],
+    [1.7, 1.9, 2.4, 2.2, 1.8]
+  );
+  await seedProjectWithSurvey({
+    name: "Figma Demo Route D (Porto)",
+    userId: appUserPorto.id,
+    entityId: entityPorto.id,
+    points: dPoints,
+  });
+
   console.log("🎉 Seeded EIRI demo data (FeatureCollections with point-level eIRI).");
-  console.log("🔑 Login: app_user / password123");
+  console.log("🔑 Logins:");
+  console.log("   - admin / password123");
+  console.log("   - dashboard_user / password123 (city: Lisbon)");
+  console.log("   - app_user / password123 (city: Lisbon)");
+  console.log("   - app_porto / password123 (city: Porto)");
   console.log("🗺️  Test: GET /api/surveys/map?bbox=-9.75,38.27,-8.54,39.20&months=6");
 }
 

@@ -38,7 +38,7 @@ export class CityHallController extends CityHallControllerBase {
   @nestAccessControl.UseRoles({
     resource: "CityHall",
     action: "read",
-    possession: "any",
+    possession: "own",
   })
   async getAvailableCityHalls(@UserData() userInfo: UserInfo): Promise<CityHall[]> {
     if (userInfo.roles.includes("admin")) {

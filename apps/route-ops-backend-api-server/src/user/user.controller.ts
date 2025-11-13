@@ -82,7 +82,7 @@ export class UserController extends UserControllerBase {
   @nestAccessControl.UseRoles({
     resource: "User",
     action: "read",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: common.ForbiddenException,
@@ -165,13 +165,22 @@ export class UserController extends UserControllerBase {
       include: { cityHall: true },
     });
 
-    const userRole = currentUser?.role || "app_user";
+    // Determine effective role: check roles array first, then fallback to primary role
+    const userRoles = (currentUser?.roles as string[]) || [];
+    const userRole = userRoles.includes("admin") 
+      ? "admin" 
+      : userRoles.includes("dashboard_user") 
+      ? "dashboard_user" 
+      : (currentUser?.role as string) || "app_user";
     const userCityHallId = currentUser?.cityHallId;
 
     try {
       // If dashboard user didn't provide cityHall, default to their own city hall
+      const requestedCityHallId = (data as any)?.cityHallId as string | undefined;
       const cityHallConnect = data.cityHall
         ? { connect: data.cityHall }
+        : requestedCityHallId
+        ? { connect: { id: requestedCityHallId } }
         : userRole === "dashboard_user" && userCityHallId
         ? { connect: { id: userCityHallId } }
         : undefined;
@@ -498,12 +507,16 @@ export class UserController extends UserControllerBase {
       throw new common.NotFoundException("User not found");
     }
 
-    if (user.role !== "dashboard_user" && user.role !== "admin") {
+    const userRoles = (user.roles as string[]) || [];
+    const isDashboardUser = user.role === "dashboard_user" || userRoles.includes("dashboard_user");
+    const isAdmin = user.role === "admin" || userRoles.includes("admin");
+    
+    if (!isDashboardUser && !isAdmin) {
       throw new common.ForbiddenException("This endpoint is only for dashboard users and admins");
     }
 
     // If admin has no city hall assigned, return all available city halls
-    if (user.role === "admin" && !user.cityHall) {
+    if (isAdmin && !user.cityHall) {
       const allCityHalls = await this.prisma.cityHall.findMany({
         orderBy: { name: 'asc' },
       });

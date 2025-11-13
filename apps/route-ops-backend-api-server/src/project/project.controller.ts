@@ -38,7 +38,7 @@ export class ProjectController extends ProjectControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Project",
     action: "create",
-    possession: "any",
+    possession: "own",
   })
   async createProject(
     @common.Body() data: CreateProjectDto | ProjectCreateInput

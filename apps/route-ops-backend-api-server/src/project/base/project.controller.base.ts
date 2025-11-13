@@ -53,7 +53,7 @@ export class ProjectControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Project",
     action: "create",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,

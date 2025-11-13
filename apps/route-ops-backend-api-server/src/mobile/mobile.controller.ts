@@ -93,6 +93,26 @@ export class MobileController {
     return this.service.startProject(body, user);
   }
 
+  @common.Post("project/start/:id")
+  @swagger.ApiOperation({ summary: "Start existing scheduled project by id (upsert start data)" })
+  @swagger.ApiParam({ name: "id", type: "string" })
+  @swagger.ApiBody({ type: StartProjectDto })
+  @swagger.ApiOkResponse({
+    description: "Project started or updated successfully",
+    schema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+      },
+    },
+  })
+  async startExistingProject(
+    @common.Param("id") id: string,
+    @common.Body() body: StartProjectDto,
+    @UserData() user: UserInfo
+  ) {
+    return this.service.startExistingProject(id, body, user);
+  }
   @common.Post("project/end")
   @swagger.ApiOperation({ summary: "End project from mobile" })
   @swagger.ApiBody({ type: EndProjectDto })
@@ -154,6 +174,28 @@ export class MobileController {
   })
   async getProjectStatus(@common.Param("id") id: string) {
     return this.service.getProjectStatus(id);
+  }
+
+  @common.Get("projects/scheduled")
+  @swagger.ApiOperation({ summary: "List scheduled (future) projects for current user" })
+  @swagger.ApiOkResponse({
+    description: "Scheduled projects",
+    schema: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          lat: { type: "number", nullable: true },
+          lng: { type: "number", nullable: true },
+          remarks: { type: "string", nullable: true },
+          startDate: { type: "string", description: "ISO 8601 date" },
+        },
+      },
+    },
+  })
+  async listScheduled(@UserData() user: UserInfo) {
+    return this.service.getScheduledProjects(user);
   }
 }
 

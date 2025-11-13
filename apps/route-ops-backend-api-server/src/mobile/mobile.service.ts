@@ -1,6 +1,8 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, BadRequestException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { UserInfo } from "../auth/UserInfo";
+import { EnumProjectStatus } from "../project/base/EnumProjectStatus";
 
 @Injectable()
 export class MobileService {
@@ -51,7 +53,24 @@ export class MobileService {
 
   async startProject(body: any, user: UserInfo) {
     const { lat, lng, date, remarks } = body ?? {};
-    
+
+    // If coordinates are provided, require both and validate numbers
+    const latProvided = typeof lat !== "undefined";
+    const lngProvided = typeof lng !== "undefined";
+    if ((latProvided && !lngProvided) || (!latProvided && lngProvided)) {
+      throw new BadRequestException("Both lat and lng must be provided together");
+    }
+    if (latProvided && lngProvided) {
+      if (
+        typeof lat !== "number" ||
+        typeof lng !== "number" ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng)
+      ) {
+        throw new BadRequestException("lat and lng must be valid numbers");
+      }
+    }
+
     // Get user with cityHallId
     const dbUser = await this.prisma.user.findUnique({
       where: { id: user.id },
@@ -74,7 +93,7 @@ export class MobileService {
       status: "active",
       createdBy: user.id,
       description: remarks ?? null,
-      routePoints: lat && lng ? {
+      routePoints: latProvided && lngProvided ? {
         create: [{ latitude: lat, longitude: lng, timestamp }],
       } : undefined,
     };
@@ -91,6 +110,87 @@ export class MobileService {
     return { projectId: project.id };
   }
 
+  async startExistingProject(projectId: string, body: any, user: UserInfo) {
+    const { lat, lng, date, remarks } = body ?? {};
+
+    // If coordinates are provided, require both and validate numbers
+    const latProvided = typeof lat !== "undefined";
+    const lngProvided = typeof lng !== "undefined";
+    if ((latProvided && !lngProvided) || (!latProvided && lngProvided)) {
+      throw new BadRequestException("Both lat and lng must be provided together");
+    }
+    if (latProvided && lngProvided) {
+      if (
+        typeof lat !== "number" ||
+        typeof lng !== "number" ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng)
+      ) {
+        throw new BadRequestException("lat and lng must be valid numbers");
+      }
+    }
+
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: {
+        id: true,
+        status: true,
+        assignedUser: true,
+        cityHallId: true,
+      },
+    });
+
+    if (!project) {
+      throw new Error(`Project with id ${projectId} not found`);
+    }
+
+    // Attach entity if missing
+    const userRow = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { cityHallId: true },
+    });
+
+    // Update project core fields (strongly typed)
+    const data: Prisma.ProjectUpdateInput = {
+      status: EnumProjectStatus.ACTIVE,
+    };
+    if (typeof remarks === "string" && remarks.length > 0) {
+      data.description = remarks;
+    }
+    if (!project.assignedUser) {
+      data.assignedUser = user.id;
+    }
+    if (!project.cityHallId && userRow?.cityHallId) {
+      data.cityHall = { connect: { id: userRow.cityHallId } };
+    }
+    await this.prisma.project.update({
+      where: { id: projectId },
+      data,
+    });
+
+    // Add starting route point if provided
+    if (latProvided && lngProvided) {
+      let timestamp: number | null = null;
+      if (date) {
+        const dateMs = Date.parse(date);
+        if (!isNaN(dateMs)) {
+          timestamp = Math.floor(dateMs / 1000);
+        }
+      } else {
+        timestamp = Math.floor(Date.now() / 1000);
+      }
+      await this.prisma.routePoint.create({
+        data: {
+          project: { connect: { id: projectId } },
+          latitude: lat,
+          longitude: lng,
+          timestamp,
+        },
+      });
+    }
+
+    return { projectId };
+  }
   async endProject(body: any, user: UserInfo) {
     const { projectId, numAttachments, geometry, anomalies } = body ?? {};
 
@@ -108,11 +208,10 @@ export class MobileService {
       throw new Error(`Project with id ${projectId} not found`);
     }
 
-    // Flatten points to a single LineString for MVP
-    let line: any = null;
+    // Extract coordinates and bbox directly from incoming geometry; store as-is
     let bbox: [number, number, number, number] | null = null;
+    const coords: [number, number][] = [];
     if (geometry?.type === "FeatureCollection") {
-      const coords: [number, number][] = [];
       for (const f of geometry.features ?? []) {
         if (f?.geometry?.type === "Point" && Array.isArray(f.geometry.coordinates)) {
           const [lng, lat] = f.geometry.coordinates;
@@ -127,10 +226,9 @@ export class MobileService {
             ];
           }
         } else if (f?.geometry?.type === "LineString" && Array.isArray(f.geometry.coordinates)) {
-          // Handle LineString directly
-          for (const coord of f.geometry.coordinates) {
-            if (Array.isArray(coord) && coord.length >= 2) {
-              const [lng, lat] = coord;
+          for (const c of f.geometry.coordinates) {
+            if (Array.isArray(c) && c.length >= 2) {
+              const [lng, lat] = c;
               if (typeof lng === "number" && typeof lat === "number") {
                 coords.push([lng, lat]);
                 if (!bbox) bbox = [lng, lat, lng, lat];
@@ -145,12 +243,25 @@ export class MobileService {
           }
         }
       }
-      if (coords.length > 1) {
-        line = { type: "LineString", coordinates: coords };
+    } else if (geometry?.type === "LineString" && Array.isArray(geometry.coordinates)) {
+      for (const c of geometry.coordinates) {
+        if (Array.isArray(c) && c.length >= 2) {
+          const [lng, lat] = c;
+          if (typeof lng === "number" && typeof lat === "number") {
+            coords.push([lng, lat]);
+            if (!bbox) bbox = [lng, lat, lng, lat];
+            bbox = [
+              Math.min(bbox[0], lng),
+              Math.min(bbox[1], lat),
+              Math.max(bbox[2], lng),
+              Math.max(bbox[3], lat),
+            ];
+          }
+        }
       }
     }
 
-    // Calculate eIRI average from geometry features
+    // Calculate eIRI average from geometry features or segments
     const eIriValues: number[] = (geometry?.features ?? [])
       .map((f: any) => Number(f?.properties?.eIri))
       .filter((n: any) => Number.isFinite(n));
@@ -160,18 +271,17 @@ export class MobileService {
 
     // Calculate length if coordinates are available
     let lengthMeters: number | null = null;
-    if (line && line.coordinates && line.coordinates.length > 1) {
-      // Simple distance calculation (Haversine would be more accurate)
-      let totalDistance = 0;
-      for (let i = 1; i < line.coordinates.length; i++) {
-        const [lng1, lat1] = line.coordinates[i - 1];
-        const [lng2, lat2] = line.coordinates[i];
-        // Approximate distance in meters (using simple lat/lng difference)
-        const dLat = (lat2 - lat1) * 111000; // ~111km per degree latitude
-        const dLng = (lng2 - lng1) * 111000 * Math.cos((lat1 + lat2) / 2 * Math.PI / 180);
-        totalDistance += Math.sqrt(dLat * dLat + dLng * dLng);
+    if (coords.length > 1) {
+      let total = 0;
+      for (let i = 1; i < coords.length; i++) {
+        const [lng1, lat1] = coords[i - 1];
+        const [lng2, lat2] = coords[i];
+        const dLat = (lat2 - lat1) * 111000;
+        const dLng =
+          (lng2 - lng1) * 111000 * Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
+        total += Math.sqrt(dLat * dLat + dLng * dLng);
       }
-      lengthMeters = totalDistance;
+      lengthMeters = total;
     }
 
     // Create survey for this project
@@ -182,7 +292,7 @@ export class MobileService {
         startTime: new Date(),
         endTime: new Date(),
         status: "Completed",
-        geometryJson: line,
+        geometryJson: geometry ?? null,
         bbox: bbox as any,
         eIriAvg: eIriAvg as any,
         lengthMeters: lengthMeters as any,
@@ -229,6 +339,37 @@ export class MobileService {
       status: project?.status ?? null,
       attachmentsProgress: { imagesUploaded: 0, videosUploaded: 0, imagesTotal: 0, videosTotal: 0, complete: true },
     };
+  }
+
+  async getScheduledProjects(user: UserInfo) {
+    // Scheduled definition (Option A): projects with status="pending" assigned to this user
+    const projects = await this.prisma.project.findMany({
+      where: {
+        status:EnumProjectStatus.PENDING,
+        assignedUser: user.id,
+      },
+      select: {
+        id: true,
+        description: true,
+        createdAt: true,
+        routePoints: {
+          take: 1,
+          orderBy: [
+            { timestamp: "asc"},
+            { createdAt: "asc" },
+          ],
+          select: {
+            latitude: true,
+            longitude: true,
+            timestamp: true,
+            createdAt: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    return projects;
   }
 }
 

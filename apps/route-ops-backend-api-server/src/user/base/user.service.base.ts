@@ -32,12 +32,15 @@ export class UserServiceBase {
   }
 
   async users(args: Prisma.UserFindManyArgs): Promise<PrismaUser[]> {
-    const a = (args ?? {}) as any;
-    const where: Prisma.UserWhereInput = {
-      ...(a.where ?? {}),
-      ...(a.cityHallId ? { cityHallId: a.cityHallId as string } : {}),
+    const { cityHallId, ...rest } = (args as any) || {};
+    const normalized: Prisma.UserFindManyArgs = {
+      ...(rest as Prisma.UserFindManyArgs),
+      where: {
+        ...((rest as Prisma.UserFindManyArgs)?.['where'] ?? {}),
+        ...(typeof cityHallId === "string" && cityHallId.length > 0 ? { cityHallId } : {}),
+      },
     };
-    const results = await this.prisma.user.findMany({ ...a, where });
+    const results = await this.prisma.user.findMany(normalized);
     // Add entity alias to all results
     return results.map(result => {
       if (result.cityHallId && (result as any).cityHall) {

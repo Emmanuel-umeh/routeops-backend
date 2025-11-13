@@ -22,20 +22,25 @@ export class SurveyController extends SurveyControllerBase {
   @ApiQuery({ name: "months", required: false, description: "Lookback window in months (default 6)" })
   @ApiOkResponse({ description: "Array of surveys for map" })
   async listForMap(@common.Query("bbox") bbox: string, @common.Query("months") months?: string) {
-    const [minLng, minLat, maxLng, maxLat] = bbox.split(",").map(Number);
-    const lookbackMonths = Number(months ?? 6);
+    const parts = (bbox ?? "").split(",").map((n) => Number(n));
+    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
+      return [];
+    }
+    // Normalize bbox so min/max are in correct order
+    const minLng = Math.min(parts[0], parts[2]);
+    const maxLng = Math.max(parts[0], parts[2]);
+    const minLat = Math.min(parts[1], parts[3]);
+    const maxLat = Math.max(parts[1], parts[3]);
 
+    const lookbackMonths = Number.isFinite(Number(months)) ? Number(months) : 6;
     const since = new Date();
     since.setMonth(since.getMonth() - lookbackMonths);
 
-    // Filter by createdAt and bbox overlap; bbox is stored as [minLng,minLat,maxLng,maxLat]
+    // Fetch by time window only; filter bbox in memory for reliability
     const surveys = await this.service.surveys({
       where: {
         createdAt: { gte: since },
-        OR: [
-          { bbox: { path: [], array_contains: [minLng, minLat, maxLng, maxLat] as any } },
-        ],
-      } as any,
+      },
       select: {
         id: true,
         projectId: true,
@@ -47,22 +52,35 @@ export class SurveyController extends SurveyControllerBase {
         eIriAvg: true,
         lengthMeters: true,
         geometryJson: true,
-      },
+        bbox: true,
+      } as any,
       orderBy: { createdAt: "desc" },
     });
 
-    return surveys.map((s: any) => ({
-      id: s.id,
-      projectId: s.projectId,
-      name: s.name,
-      status: s.status,
-      startTime: s.startTime,
-      endTime: s.endTime,
-      lengthMeters: s.lengthMeters,
-      eIriAvg: s.eIriAvg,
-      color: bucketColor(s.eIriAvg),
-      geometry: s.geometryJson,
-    }));
+    const overlaps = (b?: any): boolean => {
+      if (!Array.isArray(b) || b.length < 4) return false;
+      const [sMinLng, sMinLat, sMaxLng, sMaxLat] = b.map((n: any) => Number(n));
+      if ([sMinLng, sMinLat, sMaxLng, sMaxLat].some((n) => !Number.isFinite(n))) return false;
+      // rectangles overlap test
+      const lonOverlap = sMinLng <= maxLng && sMaxLng >= minLng;
+      const latOverlap = sMinLat <= maxLat && sMaxLat >= minLat;
+      return lonOverlap && latOverlap;
+    };
+
+    return surveys
+      .filter((s: any) => overlaps(s.bbox))
+      .map((s: any) => ({
+        id: s.id,
+        projectId: s.projectId,
+        name: s.name,
+        status: s.status,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        lengthMeters: s.lengthMeters,
+        eIriAvg: s.eIriAvg,
+        color: bucketColor(s.eIriAvg),
+        geometry: s.geometryJson,
+      }));
   }
 }
 

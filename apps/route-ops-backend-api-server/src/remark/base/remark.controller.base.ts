@@ -40,7 +40,7 @@ export class RemarkControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Remark",
     action: "create",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,
@@ -79,7 +79,7 @@ export class RemarkControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Remark",
     action: "read",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,
@@ -150,7 +150,7 @@ export class RemarkControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Remark",
     action: "update",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,
@@ -201,7 +201,7 @@ export class RemarkControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Remark",
     action: "delete",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,

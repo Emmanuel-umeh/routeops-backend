@@ -37,7 +37,7 @@ export class HazardController extends HazardControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Remark",
     action: "create",
-    possession: "any",
+    possession: "own",
   })
   async addRemarkToHazard(
     @common.Param("id") hazardId: string,
@@ -65,7 +65,7 @@ export class HazardController extends HazardControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Remark",
     action: "read",
-    possession: "any",
+    possession: "own",
   })
   async getHazardRemarks(
     @common.Param("id") hazardId: string

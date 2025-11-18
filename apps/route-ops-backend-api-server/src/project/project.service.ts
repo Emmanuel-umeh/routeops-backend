@@ -102,6 +102,7 @@ export class ProjectService extends ProjectServiceBase {
         assignedUser: data.assignedUserId,
         createdBy: data.createdBy,
         videoUrl: data.videoUrl,
+        scheduledDate: data.scheduledDate ? new Date(data.scheduledDate) : undefined,
         cityHall: data.cityHallId ? { connect: { id: data.cityHallId } } : undefined,
         routePoints: routePointIds.length > 0 ? { connect: routePointIds.map(id => ({ id })) } : undefined,
         hazards: data.hazardIds && data.hazardIds.length > 0 ? { connect: data.hazardIds.map(id => ({ id })) } : undefined,

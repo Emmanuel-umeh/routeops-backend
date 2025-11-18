@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsString, IsOptional, IsArray, IsNumber, IsEnum, MaxLength } from "class-validator";
+import { IsString, IsOptional, IsArray, IsNumber, IsEnum, MaxLength, IsDateString } from "class-validator";
 import { EnumProjectStatus } from "../base/EnumProjectStatus";
 
 export class RoutePointDto {
@@ -108,6 +108,15 @@ export class CreateProjectDto {
   @MaxLength(1000)
   @IsOptional()
   videoUrl?: string | null;
+
+  @ApiProperty({
+    description: "Scheduled date for the project",
+    example: "2025-12-25T10:00:00Z",
+    required: false,
+  })
+  @IsDateString()
+  @IsOptional()
+  scheduledDate?: string | null;
 
   @ApiProperty({
     description: "Array of route points with coordinates",

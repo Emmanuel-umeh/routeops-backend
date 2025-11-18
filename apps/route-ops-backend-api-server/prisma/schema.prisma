@@ -33,20 +33,21 @@ model RoutePoint {
 }
 
 model Project {
-  assignedUser String?
-  cityHall     CityHall?          @relation(fields: [cityHallId], references: [id])
-  cityHallId   String?
-  createdAt    DateTime           @default(now())
-  createdBy    String?
-  description  String?
-  hazards      Hazard[]
-  id           String             @id @default(uuid())
-  name         String?
-  routePoints  RoutePoint[]
-  status       EnumProjectStatus?
-  surveys      Survey[]
-  updatedAt    DateTime           @updatedAt
-  videoUrl     String?
+  assignedUser   String?
+  cityHall       CityHall?          @relation(fields: [cityHallId], references: [id])
+  cityHallId     String?
+  createdAt      DateTime           @default(now())
+  createdBy      String?
+  description    String?
+  hazards        Hazard[]
+  id             String             @id @default(uuid())
+  name           String?
+  routePoints    RoutePoint[]
+  scheduledDate  DateTime?
+  status         EnumProjectStatus?
+  surveys        Survey[]
+  updatedAt      DateTime           @updatedAt
+  videoUrl       String?
 }
 
 model Remark {
@@ -119,7 +120,6 @@ model User {
   updatedAt  DateTime      @updatedAt
   username   String        @unique
 }
-
 
 enum EnumProjectStatus {
   active

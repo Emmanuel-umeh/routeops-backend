@@ -352,6 +352,7 @@ export class MobileService {
         id: true,
         description: true,
         createdAt: true,
+
         routePoints: {
           take: 1,
           orderBy: [
@@ -369,7 +370,10 @@ export class MobileService {
       orderBy: { createdAt: "asc" },
     });
 
-    return projects;
+    return {
+      message: "Scheduled projects retrieved successfully",
+      data: projects
+    }
   }
 }
 

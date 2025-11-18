@@ -352,6 +352,8 @@ export class MobileService {
         id: true,
         description: true,
         createdAt: true,
+        scheduledDate: true,
+        
 
         routePoints: {
           take: 1,

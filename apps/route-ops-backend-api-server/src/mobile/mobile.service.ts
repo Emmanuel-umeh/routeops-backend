@@ -353,7 +353,7 @@ export class MobileService {
         description: true,
         createdAt: true,
         scheduledDate: true,
-        
+
 
         routePoints: {
           take: 1,
@@ -373,6 +373,7 @@ export class MobileService {
     });
 
     return {
+      success: true,
       message: "Scheduled projects retrieved successfully",
       data: projects
     }

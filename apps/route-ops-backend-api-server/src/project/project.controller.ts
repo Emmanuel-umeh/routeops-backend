@@ -7,6 +7,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CreateProjectDto } from "./dto/CreateProjectDto";
 import { Project } from "./base/Project";
 import { ProjectCreateInput } from "./base/ProjectCreateInput";
+import { UserData } from "../auth/userData.decorator";
 
 @swagger.ApiTags("projects")
 @common.Controller("projects")
@@ -41,14 +42,25 @@ export class ProjectController extends ProjectControllerBase {
     possession: "own",
   })
   async createProject(
-    @common.Body() data: CreateProjectDto | ProjectCreateInput
+    @common.Body() data: CreateProjectDto | ProjectCreateInput,
+    @UserData() currentUser?: { id: string }
   ): Promise<Project> {
     // Check if it's our simplified DTO (has routePoints array)
     if ('routePoints' in data && Array.isArray(data.routePoints)) {
-      return await this.service.createProjectWithRoutePoints(data as CreateProjectDto);
+      const dto = data as CreateProjectDto;
+      // If assignedUserId is not provided, default to the current user (creator)
+      if (!dto.assignedUserId && currentUser?.id) {
+        dto.assignedUserId = currentUser.id;
+      }
+      return await this.service.createProjectWithRoutePoints(dto);
     }
     
     // Fall back to original implementation for backward compatibility
-    return await super.createProject(data as ProjectCreateInput);
+    const input = data as ProjectCreateInput;
+    // If assignedUser is not provided, default to the current user (creator)
+    if (!input.assignedUser && currentUser?.id) {
+      input.assignedUser = currentUser.id;
+    }
+    return await super.createProject(input);
   }
 }

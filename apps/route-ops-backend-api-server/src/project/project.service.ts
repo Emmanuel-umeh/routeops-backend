@@ -105,7 +105,7 @@ export class ProjectService extends ProjectServiceBase {
       data: {
         name: data.name || "Untitled Project",
         description: data.description,
-        status: data.status || "active",
+        status: data.status || EnumProjectStatus.PENDING,
         assignedUser: data.assignedUserId,
         createdBy: data.createdBy,
         videoUrl: data.videoUrl,

@@ -48,8 +48,8 @@ export class ProjectController extends ProjectControllerBase {
     // Check if it's our simplified DTO (has routePoints array)
     if ('routePoints' in data && Array.isArray(data.routePoints)) {
       const dto = data as CreateProjectDto;
-      // If assignedUserId is not provided, default to the current user (creator)
-      if (!dto.assignedUserId && currentUser?.id) {
+      // Always assign to the current logged-in user, ignore frontend value
+      if (currentUser?.id) {
         dto.assignedUserId = currentUser.id;
       }
       return await this.service.createProjectWithRoutePoints(dto);
@@ -57,8 +57,8 @@ export class ProjectController extends ProjectControllerBase {
     
     // Fall back to original implementation for backward compatibility
     const input = data as ProjectCreateInput;
-    // If assignedUser is not provided, default to the current user (creator)
-    if (!input.assignedUser && currentUser?.id) {
+    // Always assign to the current logged-in user, ignore frontend value
+    if (currentUser?.id) {
       input.assignedUser = currentUser.id;
     }
     return await super.createProject(input);

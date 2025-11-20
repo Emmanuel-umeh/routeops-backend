@@ -330,6 +330,15 @@ export class MobileService {
   async uploadAttachments(body: any) {
     const { projectId, type, files } = body ?? {};
     const uploaded = Array.isArray(files) ? files.length : 0;
+    
+    // If type is video, save the first video URL to the project
+    if (type === "video" && Array.isArray(files) && files.length > 0) {
+      await this.prisma.project.update({
+        where: { id: projectId },
+        data: { videoUrl: files[0] },
+      });
+    }
+    
     return { uploaded, remaining: 0, complete: true, projectId, type };
   }
 

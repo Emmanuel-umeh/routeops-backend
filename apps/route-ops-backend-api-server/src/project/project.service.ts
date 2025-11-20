@@ -105,7 +105,7 @@ export class ProjectService extends ProjectServiceBase {
       data: {
         name: data.name || "Untitled Project",
         description: data.description,
-        status: data.status || EnumProjectStatus.PENDING,
+        status: EnumProjectStatus.PENDING,
         assignedUser: data.assignedUserId,
         createdBy: data.createdBy,
         videoUrl: data.videoUrl,
@@ -136,15 +136,15 @@ export class ProjectService extends ProjectServiceBase {
 
   private async generateRandomHazardsForProject(projectId: string, routePointIds: string[]): Promise<void> {
     const hazardTypes = [
-      "Pothole", "Crack", "Debris", "Sign Damage", "Guardrail Damage", 
+      "Pothole", "Crack", "Debris", "Sign Damage", "Guardrail Damage",
       "Road Marking Faded", "Drainage Issue", "Vegetation Overgrowth",
       "Street Light Out", "Sidewalk Damage", "Traffic Sign Missing"
     ];
-    
+
     const severityLevels = ["Low", "Medium", "High", "Critical"];
     const descriptions = [
       "Minor surface damage requiring attention",
-      "Moderate damage affecting road usability", 
+      "Moderate damage affecting road usability",
       "Significant damage requiring immediate repair",
       "Critical safety hazard requiring urgent attention",
       "Weather-related damage from recent storms",
@@ -154,12 +154,12 @@ export class ProjectService extends ProjectServiceBase {
 
     // Generate 2-5 random hazards per project
     const numHazards = Math.floor(Math.random() * 4) + 2; // 2-5 hazards
-    
+
     for (let i = 0; i < numHazards; i++) {
       const hazardType = hazardTypes[Math.floor(Math.random() * hazardTypes.length)];
       const severity = severityLevels[Math.floor(Math.random() * severityLevels.length)];
       const description = descriptions[Math.floor(Math.random() * descriptions.length)];
-      
+
       // If we have route points, randomly assign this hazard to one
       let routePointId: string | undefined;
       if (routePointIds.length > 0) {
@@ -169,7 +169,7 @@ export class ProjectService extends ProjectServiceBase {
       // Generate random coordinates around Lisbon area (or use route point coordinates)
       let latitude: number;
       let longitude: number;
-      
+
       if (routePointId) {
         // Get coordinates from the route point
         const routePoint = await this.prisma.routePoint.findUnique({

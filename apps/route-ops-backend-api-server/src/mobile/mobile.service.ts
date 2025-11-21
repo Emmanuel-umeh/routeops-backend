@@ -192,7 +192,7 @@ export class MobileService {
     return { projectId };
   }
   async endProject(body: any, user: UserInfo) {
-    const { projectId, numAttachments, geometry, anomalies, edgeId } = body ?? {};
+    const { projectId, numAttachments, geometry, anomalies } = body ?? {};
 
     if (!projectId) {
       throw new Error("projectId is required");
@@ -285,6 +285,7 @@ export class MobileService {
     }
 
     // Create survey for this project
+    // edgeId is already in each point's properties in the geometry
     const survey = await this.prisma.survey.create({
       data: {
         project: { connect: { id: projectId } },
@@ -296,7 +297,6 @@ export class MobileService {
         bbox: bbox as any,
         eIriAvg: eIriAvg as any,
         lengthMeters: lengthMeters as any,
-        edgeId: edgeId ?? null,
       },
       select: { id: true },
     });

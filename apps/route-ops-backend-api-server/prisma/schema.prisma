@@ -86,7 +86,6 @@ model Hazard {
 model Survey {
   assignedUser String?
   createdAt    DateTime  @default(now())
-  edgeId       String?
   endTime      DateTime?
   id           String    @id @default(uuid())
   name         String?
@@ -97,6 +96,7 @@ model Survey {
   startTime    DateTime?
   status       String?
   // Geometry for Google Maps (GeoJSON LineString/MultiLineString)
+  // Each point in the geometry can have an edgeId in its properties
   geometryJson Json?
   // Bounding box [minLng, minLat, maxLng, maxLat]
   bbox         Json?

@@ -192,7 +192,7 @@ export class MobileService {
     return { projectId };
   }
   async endProject(body: any, user: UserInfo) {
-    const { projectId, numAttachments, geometry, anomalies } = body ?? {};
+    const { projectId, numAttachments, geometry, anomalies, edgeId } = body ?? {};
 
     if (!projectId) {
       throw new Error("projectId is required");
@@ -296,6 +296,7 @@ export class MobileService {
         bbox: bbox as any,
         eIriAvg: eIriAvg as any,
         lengthMeters: lengthMeters as any,
+        edgeId: edgeId ?? null,
       },
       select: { id: true },
     });
@@ -315,6 +316,7 @@ export class MobileService {
               severity: a?.severity ?? null,
               typeField: a?.type ?? null,
               createdBy: user.id,
+              externalId: a.mobileId
             },
           });
         }
@@ -340,6 +342,36 @@ export class MobileService {
     }
 
     return { uploaded, remaining: 0, complete: true, projectId, type };
+  }
+
+  async updateAnomalyAttachments(externalId: string, files: string[]) {
+    if (!externalId || !Array.isArray(files) || files.length === 0) {
+      throw new Error("externalId and files array are required");
+    }
+
+    // Find hazard by externalId
+    const hazard = await this.prisma.hazard.findFirst({
+      where: { externalId },
+    });
+
+    if (!hazard) {
+      throw new Error(`Hazard with externalId "${externalId}" not found`);
+    }
+
+    // Update imageUrl with the first file (or join multiple files if needed)
+    const imageUrl = files[0];
+
+    await this.prisma.hazard.update({
+      where: { id: hazard.id },
+      data: { imageUrl },
+    });
+
+    return {
+      success: true,
+      hazardId: hazard.id,
+      externalId,
+      imageUrl,
+    };
   }
 
   async getProjectStatus(id: string) {

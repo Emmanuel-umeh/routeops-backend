@@ -6,6 +6,7 @@ import { UserInfo } from "../auth/UserInfo";
 import { StartProjectDto } from "./dto/StartProjectDto";
 import { EndProjectDto } from "./dto/EndProjectDto";
 import { UploadAttachmentsDto } from "./dto/UploadAttachmentsDto";
+import { UpdateAnomalyAttachmentsDto } from "./dto/UpdateAnomalyAttachmentsDto";
 import * as defaultAuthGuard from "../auth/defaultAuth.guard";
 
 @swagger.ApiTags("mobile")
@@ -196,6 +197,28 @@ export class MobileController {
   })
   async listScheduled(@UserData() user: UserInfo) {
     return this.service.getScheduledProjects(user);
+  }
+
+  @common.Put("anomaly/attachments")
+  @swagger.ApiOperation({ summary: "Update attachments for an anomaly by externalId" })
+  @swagger.ApiBody({ type: UpdateAnomalyAttachmentsDto })
+  @swagger.ApiOkResponse({
+    description: "Anomaly attachments updated successfully",
+    schema: {
+      type: "object",
+      properties: {
+        success: { type: "boolean", example: true },
+        hazardId: { type: "string", example: "550e8400-e29b-41d4-a716-446655440000" },
+        externalId: { type: "string", example: "mobile-anomaly-123" },
+        imageUrl: { type: "string", example: "https://firebasestorage.googleapis.com/.../image.jpg" },
+      },
+    },
+  })
+  @swagger.ApiNotFoundResponse({
+    description: "Hazard with the given externalId not found",
+  })
+  async updateAnomalyAttachments(@common.Body() body: UpdateAnomalyAttachmentsDto) {
+    return this.service.updateAnomalyAttachments(body.externalId, body.files);
   }
 }
 

@@ -205,6 +205,15 @@ export class EndProjectDto {
   @ValidateNested({ each: true })
   @Type(() => AnomalyDto)
   anomalies!: AnomalyDto[];
+
+  @ApiProperty({
+    description: "Edge ID for the survey",
+    example: "edge-123",
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  edgeId?: string;
 }
 
 

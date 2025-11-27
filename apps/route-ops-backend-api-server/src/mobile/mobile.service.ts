@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { UserInfo } from "../auth/UserInfo";
 import { EnumProjectStatus } from "../project/base/EnumProjectStatus";
+import {StartProjectDto} from "./dto/StartProjectDto";
 
 @Injectable()
 export class MobileService {
@@ -51,7 +52,7 @@ export class MobileService {
     };
   }
 
-  async startProject(body: any, user: UserInfo) {
+  async startProject(body: StartProjectDto, user: UserInfo) {
     const { lat, lng, date, remarks } = body ?? {};
 
     // If coordinates are provided, require both and validate numbers
@@ -92,7 +93,7 @@ export class MobileService {
     }
 
     const projectData: any = {
-      name: "Mobile Project",
+      name: body.name ?? "Mobile Project",
       status: "active",
       createdBy: user.id,
       description: remarks ?? null,
@@ -303,14 +304,14 @@ export class MobileService {
     // Parse start and end dates if provided (for offline sync support)
     let surveyStartTime: Date = new Date();
     let surveyEndTime: Date = new Date();
-    
+
     if (startDate) {
       const startDateMs = Date.parse(startDate);
       if (!isNaN(startDateMs)) {
         surveyStartTime = new Date(startDateMs);
       }
     }
-    
+
     if (endDate) {
       const endDateMs = Date.parse(endDate);
       if (!isNaN(endDateMs)) {

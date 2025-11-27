@@ -37,6 +37,15 @@ export class StartProjectDto {
   @IsString()
   @IsOptional()
   remarks?: string;
+
+    @ApiProperty({
+        description: "Optional remarks about the project",
+        example: "Starting road inspection in downtown area",
+        required: false,
+    })
+    @IsString()
+    @IsOptional()
+     name?: string;
 }
 
 

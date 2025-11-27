@@ -175,6 +175,11 @@ export class UserController extends UserControllerBase {
     const userCityHallId = currentUser?.cityHallId;
 
     try {
+      // Validate vehicle type: if "other" is selected, vehicleTypeOther is required
+      if (data.vehicleType === "other" && !data.vehicleTypeOther) {
+        throw new Error("vehicleTypeOther is required when vehicleType is 'other'");
+      }
+
       // If dashboard user didn't provide cityHall, default to their own city hall
       const requestedCityHallId = (data as any)?.cityHallId as string | undefined;
       const cityHallConnect = data.cityHall

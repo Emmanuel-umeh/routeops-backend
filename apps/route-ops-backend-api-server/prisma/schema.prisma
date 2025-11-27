@@ -44,6 +44,7 @@ model Project {
   name          String?
   routePoints   RoutePoint[]
   scheduledDate DateTime?
+  startDate     DateTime?
   status        EnumProjectStatus?
   surveys       Survey[]
   updatedAt     DateTime           @updatedAt
@@ -107,20 +108,22 @@ model Survey {
 }
 
 model User {
-  cityHall   CityHall?     @relation(fields: [cityHallId], references: [id])
-  cityHallId String?
-  createdAt  DateTime      @default(now())
-  email      String?       @unique
-  firstName  String?
-  id         String        @id @default(uuid())
-  isActive   Boolean?
-  lastName   String?
-  password   String
-  remarks    Remark[]
-  role       EnumUserRole?
-  roles      Json
-  updatedAt  DateTime      @updatedAt
-  username   String        @unique
+  cityHall         CityHall?        @relation(fields: [cityHallId], references: [id])
+  cityHallId       String?
+  createdAt        DateTime         @default(now())
+  email            String?          @unique
+  firstName        String?
+  id               String           @id @default(uuid())
+  isActive         Boolean?
+  lastName         String?
+  password         String
+  remarks          Remark[]
+  role             EnumUserRole?
+  roles            Json
+  updatedAt        DateTime         @updatedAt
+  username         String           @unique
+  vehicleType      EnumVehicleType?
+  vehicleTypeOther String?
 }
 
 enum EnumProjectStatus {
@@ -134,4 +137,12 @@ enum EnumUserRole {
   admin
   dashboard_user
   app_user
+}
+
+enum EnumVehicleType {
+  passenger_cars
+  garbage_truck
+  bus
+  police_vehicles
+  other
 }

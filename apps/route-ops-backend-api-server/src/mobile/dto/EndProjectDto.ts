@@ -205,6 +205,24 @@ export class EndProjectDto {
   @ValidateNested({ each: true })
   @Type(() => AnomalyDto)
   anomalies!: AnomalyDto[];
+
+  @ApiProperty({
+    description: "ISO 8601 date/time when project actually started (for offline sync)",
+    example: "2024-01-23T10:30:00Z",
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @ApiProperty({
+    description: "ISO 8601 date/time when project actually ended (for offline sync)",
+    example: "2024-01-23T14:30:00Z",
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  endDate?: string;
 }
 
 

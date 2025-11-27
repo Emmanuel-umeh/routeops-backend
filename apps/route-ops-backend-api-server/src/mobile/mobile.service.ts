@@ -79,13 +79,16 @@ export class MobileService {
 
     // Convert date to timestamp (seconds, not milliseconds) for PostgreSQL INT4
     let timestamp: number | null = null;
+    let startDate: Date | null = null;
     if (date) {
       const dateMs = Date.parse(date);
       if (!isNaN(dateMs)) {
         timestamp = Math.floor(dateMs / 1000); // Convert to seconds
+        startDate = new Date(dateMs);
       }
     } else {
       timestamp = Math.floor(Date.now() / 1000); // Current time in seconds
+      startDate = new Date();
     }
 
     const projectData: any = {
@@ -93,6 +96,7 @@ export class MobileService {
       status: "active",
       createdBy: user.id,
       description: remarks ?? null,
+      startDate: startDate,
       routePoints: latProvided && lngProvided ? {
         create: [{ latitude: lat, longitude: lng, timestamp }],
       } : undefined,
@@ -150,9 +154,21 @@ export class MobileService {
       select: { cityHallId: true },
     });
 
-    // Update project core fields (strongly typed)
+    // Parse start date if provided
+    let startDate: Date | null = null;
+    if (date) {
+      const dateMs = Date.parse(date);
+      if (!isNaN(dateMs)) {
+        startDate = new Date(dateMs);
+      }
+    } else {
+      startDate = new Date();
+    }
+
+    // Update project core fields
     const data: Prisma.ProjectUpdateInput = {
       status: EnumProjectStatus.ACTIVE,
+      ...(startDate && { startDate }),
     };
     if (typeof remarks === "string" && remarks.length > 0) {
       data.description = remarks;
@@ -192,7 +208,7 @@ export class MobileService {
     return { projectId };
   }
   async endProject(body: any, user: UserInfo) {
-    const { projectId, numAttachments, geometry, anomalies } = body ?? {};
+    const { projectId, numAttachments, geometry, anomalies, startDate, endDate } = body ?? {};
 
     if (!projectId) {
       throw new Error("projectId is required");
@@ -284,14 +300,32 @@ export class MobileService {
       lengthMeters = total;
     }
 
+    // Parse start and end dates if provided (for offline sync support)
+    let surveyStartTime: Date = new Date();
+    let surveyEndTime: Date = new Date();
+    
+    if (startDate) {
+      const startDateMs = Date.parse(startDate);
+      if (!isNaN(startDateMs)) {
+        surveyStartTime = new Date(startDateMs);
+      }
+    }
+    
+    if (endDate) {
+      const endDateMs = Date.parse(endDate);
+      if (!isNaN(endDateMs)) {
+        surveyEndTime = new Date(endDateMs);
+      }
+    }
+
     // Create survey for this project
     // edgeId is already in each point's properties in the geometry
     const survey = await this.prisma.survey.create({
       data: {
         project: { connect: { id: projectId } },
         name: "Mobile Survey",
-        startTime: new Date(),
-        endTime: new Date(),
+        startTime: surveyStartTime,
+        endTime: surveyEndTime,
         status: "Completed",
         geometryJson: geometry ?? null,
         bbox: bbox as any,

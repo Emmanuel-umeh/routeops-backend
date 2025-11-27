@@ -17,6 +17,7 @@ import {
   IsOptional,
   ValidateNested,
   IsEnum,
+  IsDateString,
 } from "class-validator";
 import { CityHallWhereUniqueInput } from "../../cityHall/base/CityHallWhereUniqueInput";
 import { Type } from "class-transformer";
@@ -145,6 +146,32 @@ class ProjectUpdateInput {
     nullable: true,
   })
   videoUrl?: string | null;
+
+  @ApiProperty({
+    required: false,
+    type: String,
+    description: "Scheduled date for the project (ISO 8601)",
+    example: "2024-01-15T10:30:00Z",
+  })
+  @IsDateString()
+  @IsOptional()
+  @Field(() => String, {
+    nullable: true,
+  })
+  scheduledDate?: string | null;
+
+  @ApiProperty({
+    required: false,
+    type: String,
+    description: "Start date when project was actually started (ISO 8601)",
+    example: "2024-01-15T10:30:00Z",
+  })
+  @IsDateString()
+  @IsOptional()
+  @Field(() => String, {
+    nullable: true,
+  })
+  startDate?: string | null;
 }
 
 export { ProjectUpdateInput as ProjectUpdateInput };

@@ -356,7 +356,7 @@ export class ProjectControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Project",
     action: "update",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,
@@ -366,37 +366,71 @@ export class ProjectControllerBase {
     @common.Body() data: ProjectUpdateInput
   ): Promise<Project | null> {
     try {
+      // Check if project exists and is pending (only pending projects can be edited)
+      const existingProject = await this.service.project({
+        where: params,
+        select: { id: true, status: true },
+      });
+
+      if (!existingProject) {
+        throw new errors.NotFoundException(
+          `No resource was found for ${JSON.stringify(params)}`
+        );
+      }
+
+      // Only allow editing pending projects
+      if (existingProject.status !== EnumProjectStatus.PENDING) {
+        throw new common.BadRequestException(
+          "Only pending projects can be edited"
+        );
+      }
+
+      // Convert date strings to Date objects if provided
+      const updateData: any = {
+        ...data,
+        cityHall: data.cityHall
+          ? {
+              connect: data.cityHall,
+            }
+          : undefined,
+      };
+
+      if (data.scheduledDate !== undefined) {
+        updateData.scheduledDate = data.scheduledDate
+          ? new Date(data.scheduledDate)
+          : null;
+      }
+
+      if (data.startDate !== undefined) {
+        updateData.startDate = data.startDate ? new Date(data.startDate) : null;
+      }
+
       return await this.service.updateProject({
         where: params,
-        data: {
-          ...data,
-
-          cityHall: data.cityHall
-            ? {
-                connect: data.cityHall,
-              }
-            : undefined,
-        },
+        data: updateData,
         select: {
           assignedUser: true,
-
           cityHall: {
             select: {
               id: true,
             },
           },
-
           createdAt: true,
           createdBy: true,
           description: true,
           id: true,
           name: true,
           status: true,
+          scheduledDate: true,
+          startDate: true,
           updatedAt: true,
           videoUrl: true,
         },
       });
     } catch (error) {
+      if (error instanceof errors.NotFoundException || error instanceof common.BadRequestException) {
+        throw error;
+      }
       if (isRecordNotFoundError(error)) {
         throw new errors.NotFoundException(
           `No resource was found for ${JSON.stringify(params)}`

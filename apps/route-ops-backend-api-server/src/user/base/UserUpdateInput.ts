@@ -23,6 +23,7 @@ import {
 import { Type } from "class-transformer";
 import { RemarkUpdateManyWithoutUsersInput } from "./RemarkUpdateManyWithoutUsersInput";
 import { EnumUserRole } from "./EnumUserRole";
+import { EnumVehicleType } from "./EnumVehicleType";
 import { IsJSONValue } from "../../validators";
 import { GraphQLJSON } from "graphql-type-json";
 import { InputJsonValue } from "../../types";
@@ -141,6 +142,33 @@ class UserUpdateInput {
     nullable: true,
   })
   username?: string;
+
+  @ApiProperty({
+    required: false,
+    enum: EnumVehicleType,
+    description: "Type of vehicle assigned to the user",
+    example: "passenger_cars",
+  })
+  @IsEnum(EnumVehicleType)
+  @IsOptional()
+  @Field(() => EnumVehicleType, {
+    nullable: true,
+  })
+  vehicleType?: "passenger_cars" | "garbage_truck" | "bus" | "police_vehicles" | "other" | null;
+
+  @ApiProperty({
+    required: false,
+    type: String,
+    description: "Custom vehicle type when 'other' is selected",
+    example: "Ambulance",
+  })
+  @IsString()
+  @MaxLength(256)
+  @IsOptional()
+  @Field(() => String, {
+    nullable: true,
+  })
+  vehicleTypeOther?: string | null;
 }
 
 export { UserUpdateInput as UserUpdateInput };

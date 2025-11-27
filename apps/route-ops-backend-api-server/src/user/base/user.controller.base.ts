@@ -80,6 +80,8 @@ export class UserControllerBase {
         roles: true,
         updatedAt: true,
         username: true,
+        vehicleType: true,
+        vehicleTypeOther: true,
       },
     });
   }
@@ -122,6 +124,8 @@ export class UserControllerBase {
         roles: true,
         updatedAt: true,
         username: true,
+        vehicleType: true,
+        vehicleTypeOther: true,
       },
     });
   }
@@ -160,6 +164,8 @@ export class UserControllerBase {
         roles: true,
         updatedAt: true,
         username: true,
+        vehicleType: true,
+        vehicleTypeOther: true,
       },
     });
     if (result === null) {
@@ -187,6 +193,11 @@ export class UserControllerBase {
     @common.Body() data: UserUpdateInput
   ): Promise<User | null> {
     try {
+      // Validate vehicle type: if "other" is selected, vehicleTypeOther is required
+      if (data.vehicleType === "other" && !data.vehicleTypeOther) {
+        throw new common.BadRequestException("vehicleTypeOther is required when vehicleType is 'other'");
+      }
+
       return await this.service.updateUser({
         where: params,
         data: {
@@ -215,6 +226,8 @@ export class UserControllerBase {
           roles: true,
           updatedAt: true,
           username: true,
+          vehicleType: true,
+          vehicleTypeOther: true,
         },
       });
     } catch (error) {

@@ -9,11 +9,16 @@ import {
   swaggerDocumentOptions,
   swaggerSetupOptions,
 } from "./swagger";
+import * as express from "express";
 
 const { PORT = 3000 } = process.env;
 
 async function main() {
   const app = await NestFactory.create(AppModule, { cors: true });
+
+  // Remove body size limit (effectively unlimited - 1GB)
+  app.use(express.json({ limit: "1024mb" }));
+  app.use(express.urlencoded({ limit: "1024mb", extended: true }));
 
   app.setGlobalPrefix("api");
   app.useGlobalPipes(

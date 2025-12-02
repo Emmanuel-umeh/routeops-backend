@@ -17,6 +17,7 @@ import {
   MaxLength,
   IsOptional,
   ValidateNested,
+  IsNumber,
 } from "class-validator";
 import { Type } from "class-transformer";
 import { Project } from "../../project/base/Project";
@@ -51,6 +52,54 @@ class CityHall {
   @IsString()
   @Field(() => String)
   id!: string;
+
+  @ApiProperty({
+    required: false,
+    type: Number,
+    example: 37.060899,
+  })
+  @IsNumber()
+  @IsOptional()
+  @Field(() => Number, {
+    nullable: true,
+  })
+  defaultLatitude?: number | null;
+
+  @ApiProperty({
+    required: false,
+    type: Number,
+    example: -8.064873,
+  })
+  @IsNumber()
+  @IsOptional()
+  @Field(() => Number, {
+    nullable: true,
+  })
+  defaultLongitude?: number | null;
+
+  @ApiProperty({
+    required: false,
+    type: String,
+    example: "https://firebasestorage.googleapis.com/v0/b/smartroads-gmaps-dev.firebasestorage.app/o/geopackages%2Ffaro.gpkg?alt=media&token=...",
+  })
+  @IsString()
+  @IsOptional()
+  @Field(() => String, {
+    nullable: true,
+  })
+  gisFileUrl?: string | null;
+
+  @ApiProperty({
+    required: false,
+    type: String,
+    example: "1.0",
+  })
+  @IsString()
+  @IsOptional()
+  @Field(() => String, {
+    nullable: true,
+  })
+  gisFileVersion?: string | null;
 
   @ApiProperty({
     required: false,

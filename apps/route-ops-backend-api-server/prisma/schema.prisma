@@ -8,15 +8,19 @@ generator client {
 }
 
 model CityHall {
-  allowImages Boolean   @default(true)
-  allowVideo  Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  description String?
-  id          String    @id @default(uuid())
-  name        String?
-  projects    Project[]
-  updatedAt   DateTime  @updatedAt
-  users       User[]
+  allowImages      Boolean   @default(true)
+  allowVideo       Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  defaultLatitude  Float?
+  defaultLongitude Float?
+  description      String?
+  gisFileUrl       String?
+  gisFileVersion   String?
+  id               String    @id @default(uuid())
+  name             String?
+  projects         Project[]
+  updatedAt        DateTime  @updatedAt
+  users            User[]
 }
 
 model RoutePoint {

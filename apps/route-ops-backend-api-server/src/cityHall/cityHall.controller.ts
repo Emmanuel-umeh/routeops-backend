@@ -43,7 +43,19 @@ export class CityHallController extends CityHallControllerBase {
   async getAvailableCityHalls(@UserData() userInfo: UserInfo): Promise<CityHall[]> {
     if (userInfo.roles.includes("admin")) {
       return this.service.cityHalls({
-        select: { id: true, name: true, description: true, createdAt: true, updatedAt: true },
+        select: { 
+          id: true, 
+          name: true, 
+          description: true, 
+          allowVideo: true,
+          allowImages: true,
+          defaultLatitude: true,
+          defaultLongitude: true,
+          gisFileUrl: true,
+          gisFileVersion: true,
+          createdAt: true, 
+          updatedAt: true 
+        },
         orderBy: { name: 'asc' },
       });
     }
@@ -52,7 +64,19 @@ export class CityHallController extends CityHallControllerBase {
       if (!me?.cityHallId) return [];
       return this.service.cityHalls({
         where: { id: me.cityHallId },
-        select: { id: true, name: true, description: true, createdAt: true, updatedAt: true },
+        select: { 
+          id: true, 
+          name: true, 
+          description: true, 
+          allowVideo: true,
+          allowImages: true,
+          defaultLatitude: true,
+          defaultLongitude: true,
+          gisFileUrl: true,
+          gisFileVersion: true,
+          createdAt: true, 
+          updatedAt: true 
+        },
         orderBy: { name: 'asc' },
       });
     }

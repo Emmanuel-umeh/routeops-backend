@@ -37,17 +37,47 @@ export class MobileController {
 
   @common.Get("entity/:id")
   @swagger.ApiOperation({ summary: "Get entity details for mobile" })
-  @swagger.ApiParam({ name: "id", type: "string", example: "550e8400-e29b-41d4-a716-446655440000" })
+  @swagger.ApiParam({
+    name: "id",
+    type: "string",
+    example: "c0299df3-3cab-463c-8ffa-ad95212ce564",
+  })
   @swagger.ApiOkResponse({
     description: "Entity details",
     schema: {
       type: "object",
       properties: {
-        id: { type: "string", example: "550e8400-e29b-41d4-a716-446655440000" },
-        name: { type: "string", example: "City Hall" },
-        description: { type: "string", nullable: true, example: "Main city hall" },
-        supportedAreaVersion: { type: "string", nullable: true, example: null },
-        features: { type: "array", items: { type: "string" }, example: [] },
+        id: {
+          type: "string",
+          example: "c0299df3-3cab-463c-8ffa-ad95212ce564",
+        },
+        name: { type: "string", example: "Infralobo" },
+        description: {
+          type: "string",
+          nullable: true,
+          example: "Pilot entity for first deployment",
+        },
+        gisFile: {
+          type: "object",
+          nullable: true,
+          properties: {
+            version: { type: "string", example: "1.0" },
+            url: {
+              type: "string",
+              example:
+                "https://firebasestorage.googleapis.com/v0/b/smartroads-gmaps-dev.firebasestorage.app/o/geopackages%2Ffaro.gpkg?alt=media&token=...",
+            },
+          },
+        },
+        defaultLocation: {
+          type: "object",
+          properties: {
+            latitude: { type: "number", example: 37.060899 },
+            longitude: { type: "number", example: -8.064873 },
+          },
+        },
+        allowVideo: { type: "boolean", example: true },
+        allowImages: { type: "boolean", example: true },
       },
     },
   })

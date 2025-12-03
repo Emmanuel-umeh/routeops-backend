@@ -31,14 +31,42 @@ export class MobileService {
   async getEntity(id: string) {
     const entity = await this.prisma.cityHall.findUnique({
       where: { id },
-      select: { id: true, name: true, description: true },
+      // Cast to any so we can select newly added fields without fighting generated types
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        allowVideo: true,
+        allowImages: true,
+        defaultLatitude: true,
+        defaultLongitude: true,
+        gisFileUrl: true,
+        gisFileVersion: true,
+      } as any,
     });
+
+    if (!entity) {
+      return null;
+    }
+
+    const e: any = entity;
+
     return {
-      id: entity?.id,
-      name: entity?.name,
-      description: entity?.description,
-      supportedAreaVersion: null,
-      features: [],
+      id: entity.id,
+      name: entity.name ?? "",
+      description: entity.description ?? "",
+      gisFile: e.gisFileUrl
+        ? {
+            version: e.gisFileVersion ?? "1.0",
+            url: e.gisFileUrl,
+          }
+        : null,
+      defaultLocation: {
+        latitude: e.defaultLatitude ?? 0,
+        longitude: e.defaultLongitude ?? 0,
+      },
+      allowVideo: entity.allowVideo,
+      allowImages: entity.allowImages,
     };
   }
 

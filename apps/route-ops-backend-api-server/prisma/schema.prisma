@@ -78,6 +78,7 @@ model Hazard {
   imageUrl     String?
   latitude     Float?
   longitude    Float?
+  name         String?
   project      Project?    @relation(fields: [projectId], references: [id])
   projectId    String?
   remarks      Remark[]
@@ -86,6 +87,11 @@ model Hazard {
   severity     String?
   typeField    String?
   updatedAt    DateTime    @updatedAt
+
+  /// Road segment / edge identifier this hazard belongs to (from geometry properties.edgeId)
+  edgeId       String?
+
+  @@index([edgeId])
 }
 
 model Survey {
@@ -109,6 +115,11 @@ model Survey {
   eIriAvg      Float?
   lengthMeters Float?
   updatedAt    DateTime  @updatedAt
+
+  /// All distinct edgeIds this survey has traversed (denormalized for fast edge analytics)
+  edgeIds      String[]
+
+  @@index([edgeIds], type: Gin)
 }
 
 model User {

@@ -137,6 +137,15 @@ export class AnomalyDto {
   lng!: number;
 
   @ApiProperty({
+    description: "Name of the anomaly (optional, for display purposes)",
+    example: "Pothole #1",
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiProperty({
     description: "Remarks about the anomaly",
     example: "Deep pothole, needs immediate repair",
     required: false,

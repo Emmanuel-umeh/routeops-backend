@@ -254,10 +254,21 @@ export class MobileService {
     }
 
     // Extract coordinates and bbox directly from incoming geometry; store as-is
+    // Also collect all distinct edgeIds seen in geometry properties for analytics
     let bbox: [number, number, number, number] | null = null;
     const coords: [number, number][] = [];
+    const edgeIdSet = new Set<string>();
     if (geometry?.type === "FeatureCollection") {
       for (const f of geometry.features ?? []) {
+        const featureEdgeId =
+          (f as any)?.properties?.edgeId ??
+          (f as any)?.properties?.edge_id ??
+          (f as any)?.properties?.roadId ??
+          (f as any)?.properties?.road_id;
+        if (typeof featureEdgeId === "string" && featureEdgeId.trim().length > 0) {
+          edgeIdSet.add(featureEdgeId);
+        }
+
         if (f?.geometry?.type === "Point" && Array.isArray(f.geometry.coordinates)) {
           const [lng, lat] = f.geometry.coordinates;
           if (typeof lng === "number" && typeof lat === "number") {
@@ -347,8 +358,8 @@ export class MobileService {
       }
     }
 
-    // Create survey for this project
-    // edgeId is already in each point's properties in the geometry
+    // Create survey for this project, including all distinct edgeIds traversed
+    const edgeIds = Array.from(edgeIdSet);
     const survey = await this.prisma.survey.create({
       data: {
         project: { connect: { id: projectId } },
@@ -360,7 +371,8 @@ export class MobileService {
         bbox: bbox as any,
         eIriAvg: eIriAvg as any,
         lengthMeters: lengthMeters as any,
-      },
+        edgeIds,
+      } as any,
       select: { id: true },
     });
 
@@ -370,17 +382,25 @@ export class MobileService {
         const lat = Number(a?.lat);
         const lng = Number(a?.lng);
         if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          const anomalyEdgeId =
+            (a as any)?.edgeId ??
+            (a as any)?.edge_id ??
+            (a as any)?.roadId ??
+            (a as any)?.road_id ??
+            null;
           await this.prisma.hazard.create({
             data: {
               project: { connect: { id: projectId } },
               latitude: lat,
               longitude: lng,
+              name: a?.name ?? null,
               description: a?.remarks ?? null,
               severity: a?.severity ?? null,
               typeField: a?.type ?? null,
               createdBy: user.id,
-              externalId: a.mobileId
-            },
+              externalId: a.mobileId,
+              edgeId: anomalyEdgeId,
+            } as any,
           });
         }
       }

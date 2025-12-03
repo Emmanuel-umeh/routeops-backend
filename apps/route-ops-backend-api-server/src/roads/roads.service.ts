@@ -1,0 +1,789 @@
+import { Injectable, Logger } from "@nestjs/common";
+import * as fs from "fs";
+import * as path from "path";
+// NOTE: When you install the GeoPackage library, adjust this import to match its docs.
+// This is written assuming a GeoPackageAPI similar to @ngageoint/geopackage.
+// If the actual API differs, only this import + open logic need to be updated.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const geopackageLib = require("@ngageoint/geopackage");
+const { GeoPackageAPI, FeatureIndexManager, BoundingBox, ProjectionConstants, GeometryData } = geopackageLib;
+import * as turf from "@turf/turf";
+
+export interface NearestEdgeResult {
+  edgeId: string | null;
+  distanceMeters: number | null;
+  roadName: string | null;
+  projectId: string | null;
+  geometry: any | null;
+}
+
+// GeoJSON Feature format for direct Google Maps consumption
+export interface NearestEdgeGeoJsonFeature {
+  type: "Feature";
+  properties: {
+    edgeId: string | null;
+    distanceMeters: number | null;
+    roadName: string | null;
+    projectId: string | null;
+  };
+  geometry: {
+    type: "LineString";
+    coordinates: number[][];
+  } | null;
+}
+
+// Response format for frontend: edgeId + GeoJSON Feature
+export interface NearestEdgeResponse {
+  edgeId: string | null;
+  json: NearestEdgeGeoJsonFeature | null;
+}
+
+@Injectable()
+export class RoadsService {
+  private readonly logger = new Logger(RoadsService.name);
+  private gpkgCache: Map<string, { gpkg: any; featureDao: any; featureIndexManager: any; tableName: string }> = new Map();
+
+  // From your attribute list: fid, full_id, osm_id, osm_type, highway, name, ...
+  // We'll treat osm_id as our stable edgeId, and name as the human-readable road name.
+  private readonly edgeIdColumn = "osm_id";
+  private readonly roadNameColumn = "name";
+
+  private async getGeoPackageFiles(): Promise<string[]> {
+    const mapFilesDir = path.join(process.cwd(), "map-files");
+    
+    if (!fs.existsSync(mapFilesDir)) {
+      this.logger.error(`map-files directory not found at ${mapFilesDir}`);
+      throw new Error(`map-files directory not found at ${mapFilesDir}`);
+    }
+
+    const files = fs.readdirSync(mapFilesDir);
+    const gpkgFiles = files
+      .filter((file) => file.toLowerCase().endsWith(".gpkg"))
+      .map((file) => path.join(mapFilesDir, file));
+
+    if (gpkgFiles.length === 0) {
+      throw new Error("No .gpkg files found in map-files directory");
+    }
+
+    this.logger.log(`Found ${gpkgFiles.length} GeoPackage file(s): ${gpkgFiles.map(f => path.basename(f)).join(", ")}`);
+    return gpkgFiles;
+  }
+
+  private async getFeatureDaoForFile(gpkgPath: string): Promise<{ featureDao: any; gpkg: any; featureIndexManager: any; tableName: string } | null> {
+    // Check cache first
+    if (this.gpkgCache.has(gpkgPath)) {
+      const cached = this.gpkgCache.get(gpkgPath)!;
+      this.logger.log(`Using cached entry for ${path.basename(gpkgPath)}, has FeatureIndexManager: ${!!cached.featureIndexManager}`);
+      return cached;
+    }
+
+    if (!fs.existsSync(gpkgPath)) {
+      this.logger.error(`GeoPackage not found at ${gpkgPath}`);
+      throw new Error(`GeoPackage not found at ${gpkgPath}`);
+    }
+
+    this.logger.log(`Opening GeoPackage: ${path.basename(gpkgPath)}`);
+    const gpkg = await GeoPackageAPI.open(gpkgPath);
+
+    // Get all feature tables
+    const featureTables = gpkg.getFeatureTables();
+    if (!featureTables || featureTables.length === 0) {
+      this.logger.warn(`No feature tables found in ${path.basename(gpkgPath)}`);
+      return null;
+    }
+
+    // Auto-detect first feature table
+    const tableToUse = featureTables[0];
+    this.logger.log(`Using feature table '${tableToUse}' in ${path.basename(gpkgPath)}`);
+
+    const featureDao = gpkg.getFeatureDao(tableToUse);
+    if (!featureDao) {
+      this.logger.warn(`Feature table '${tableToUse}' not found in ${path.basename(gpkgPath)}`);
+      return null;
+    }
+
+    // Create FeatureIndexManager for spatial queries
+    let featureIndexManager: any = null;
+    try {
+      if (FeatureIndexManager) {
+        this.logger.log(`Creating FeatureIndexManager for ${path.basename(gpkgPath)}...`);
+        featureIndexManager = new FeatureIndexManager(gpkg, featureDao);
+        this.logger.log(`FeatureIndexManager created successfully`);
+        
+        // Ensure the index exists
+        if (typeof featureIndexManager.index === "function") {
+          this.logger.log(`Creating spatial index...`);
+          featureIndexManager.index();
+          this.logger.log(`Spatial index created`);
+        } else {
+          this.logger.warn(`FeatureIndexManager.index() method not available`);
+        }
+      } else {
+        this.logger.warn(`FeatureIndexManager class not available in GeoPackage library`);
+      }
+    } catch (e: any) {
+      this.logger.error(`Could not create FeatureIndexManager: ${e?.message || e}, stack: ${e?.stack}`);
+    }
+
+    // Cache the opened GeoPackage, featureDao, and featureIndexManager
+    const cacheEntry = { gpkg, featureDao, featureIndexManager, tableName: tableToUse };
+    this.gpkgCache.set(gpkgPath, cacheEntry);
+    return cacheEntry;
+  }
+
+  async findNearestEdge(
+    lat: number,
+    lng: number,
+    radiusMeters: number
+  ): Promise<NearestEdgeResult | null> {
+    // Get all .gpkg files in map-files directory
+    const gpkgFiles = await this.getGeoPackageFiles();
+
+    // Approximate bbox in degrees around the click point
+    // Cap radius to prevent overflow (max ~180 degrees = half the world)
+    const maxRadiusMeters = 20000000; // ~20,000 km (half Earth's circumference)
+    const effectiveRadius = Math.min(radiusMeters, maxRadiusMeters);
+    
+    const latRad = (lat * Math.PI) / 180;
+    const deltaLat = effectiveRadius / 111320; // ~ meters per degree latitude
+    const deltaLng = effectiveRadius / (111320 * Math.cos(latRad || 1e-6));
+    
+    // Cap deltas to prevent overflow (max 180 degrees)
+    const maxDelta = 180;
+    const cappedDeltaLat = Math.min(deltaLat, maxDelta);
+    const cappedDeltaLng = Math.min(deltaLng, maxDelta);
+    
+    const minX = lng - cappedDeltaLng;
+    const maxX = lng + cappedDeltaLng;
+    const minY = lat - cappedDeltaLat;
+    const maxY = lat + cappedDeltaLat;
+
+    const clickPoint = turf.point([lng, lat]);
+
+    // Query features from all GeoPackage files using FeatureIndexManager with bounding box
+    let allFeatures: any[] = [];
+    
+    // Create bounding box for the search area
+    const bbox = new BoundingBox(minX, minY, maxX, maxY);
+    
+    // Iterate over all .gpkg files
+    for (const gpkgPath of gpkgFiles) {
+      try {
+        const daoEntry = await this.getFeatureDaoForFile(gpkgPath);
+        if (!daoEntry) {
+          this.logger.warn(`Skipping ${path.basename(gpkgPath)} - no feature DAO available`);
+          continue;
+        }
+        const { featureDao, featureIndexManager, gpkg } = daoEntry;
+
+        this.logger.log(`Querying features from ${path.basename(gpkgPath)} using bounding box...`);
+        
+        let fileFeatures: any[] = [];
+        
+        // Use FeatureIndexManager to query with bounding box (most efficient method)
+        if (featureIndexManager) {
+          this.logger.log(`FeatureIndexManager available for ${path.basename(gpkgPath)}, attempting spatial query...`);
+          try {
+            // Log available methods on FeatureIndexManager
+            const fimMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(featureIndexManager))
+              .filter(n => typeof featureIndexManager[n] === 'function' && n.includes('query'))
+              .join(', ');
+            this.logger.log(`FeatureIndexManager query methods: ${fimMethods}`);
+            
+            // Query with bounding box and WGS84 projection (EPSG:4326)
+            const projection = ProjectionConstants ? ProjectionConstants.EPSG_4326 : null;
+            this.logger.log(`Using projection: ${projection}, bbox: minX=${bbox.minX}, maxX=${bbox.maxX}, minY=${bbox.minY}, maxY=${bbox.maxY}`);
+            
+            let resultSet: any = null;
+            if (projection && typeof featureIndexManager.queryWithBoundingBoxAndProjection === "function") {
+              this.logger.log(`Calling queryWithBoundingBoxAndProjection...`);
+              resultSet = featureIndexManager.queryWithBoundingBoxAndProjection(bbox, projection);
+            } else if (typeof featureIndexManager.queryWithBoundingBox === "function") {
+              this.logger.log(`Calling queryWithBoundingBox...`);
+              resultSet = featureIndexManager.queryWithBoundingBox(bbox);
+            } else {
+              this.logger.warn(`No suitable query method found on FeatureIndexManager`);
+            }
+            
+            this.logger.log(`ResultSet type: ${typeof resultSet}, isArray: ${Array.isArray(resultSet)}, has iterator: ${resultSet && typeof resultSet[Symbol.iterator] === 'function'}`);
+            
+            if (resultSet) {
+              // Convert result set to array
+              try {
+                if (Array.isArray(resultSet)) {
+                  fileFeatures = resultSet;
+                } else if (resultSet && typeof resultSet[Symbol.iterator] === "function") {
+                  fileFeatures = Array.from(resultSet);
+                } else if (typeof resultSet.forEach === "function") {
+                  resultSet.forEach((feature: any) => {
+                    fileFeatures.push(feature);
+                  });
+                } else if (typeof resultSet.next === "function") {
+                  // Iterator pattern
+                  let next = resultSet.next();
+                  while (!next.done) {
+                    fileFeatures.push(next.value);
+                    next = resultSet.next();
+                  }
+                } else {
+                  this.logger.warn(`Unknown resultSet type, trying to use directly`);
+                  fileFeatures = [resultSet];
+                }
+              } catch (e: any) {
+                this.logger.warn(`Could not convert result set to array: ${e?.message || e}`);
+              }
+            } else {
+              this.logger.warn(`FeatureIndexManager query returned null/undefined`);
+            }
+            
+            this.logger.log(`Loaded ${fileFeatures.length} features from ${path.basename(gpkgPath)} using FeatureIndexManager`);
+          } catch (e: any) {
+            this.logger.error(`FeatureIndexManager query failed: ${e?.message || e}, stack: ${e?.stack}`);
+            this.logger.warn(`Falling back to queryForAll`);
+          }
+        } else {
+          this.logger.warn(`FeatureIndexManager not available for ${path.basename(gpkgPath)}`);
+        }
+        
+        // Fallback to queryForAll if FeatureIndexManager didn't work
+        if (fileFeatures.length === 0 && typeof (featureDao as any).queryForAll === "function") {
+          this.logger.log(`Using queryForAll() fallback for ${path.basename(gpkgPath)}`);
+          const results = (featureDao as any).queryForAll();
+          fileFeatures = Array.isArray(results) ? results : [];
+          if (!Array.isArray(results) && results) {
+            try {
+              fileFeatures = Array.from(results);
+            } catch (e) {
+              this.logger.warn(`Could not convert results to array: ${e}`);
+            }
+          }
+        }
+        else {
+          // Try to get features using other methods
+          this.logger.warn(`No standard query method found in ${path.basename(gpkgPath)}, trying alternative methods...`);
+          
+          // Try to iterate through features manually
+          try {
+            // Try count() method
+            let count = 0;
+            if (typeof (featureDao as any).count === "function") {
+              count = (featureDao as any).count();
+              this.logger.log(`Feature count in ${path.basename(gpkgPath)}: ${count}`);
+            }
+            
+            // Try queryForId with different ID formats
+            if (count > 0 && typeof (featureDao as any).queryForId === "function") {
+              // Try first 100 IDs (or all if less)
+              const maxIds = Math.min(100, count);
+              for (let i = 1; i <= maxIds; i++) {
+                try {
+                  const feature = (featureDao as any).queryForId(i);
+                  if (feature) {
+                    fileFeatures.push(feature);
+                  }
+                } catch (e) {
+                  // Skip if ID doesn't exist
+                }
+              }
+              this.logger.log(`Loaded ${fileFeatures.length} features from ${path.basename(gpkgPath)} using queryForId (tried first ${maxIds} IDs)`);
+            }
+            
+            // If still no features, try queryForChunk with pagination
+            if (fileFeatures.length === 0 && typeof (featureDao as any).queryForChunk === "function") {
+              try {
+                let offset = 0;
+                const chunkSize = 1000;
+                let hasMore = true;
+                
+                while (hasMore && fileFeatures.length < 10000) { // Limit to 10k features per file
+                  const chunk = (featureDao as any).queryForChunk(offset, chunkSize);
+                  if (!chunk || chunk.length === 0) {
+                    hasMore = false;
+                  } else {
+                    fileFeatures = fileFeatures.concat(chunk);
+                    offset += chunkSize;
+                    if (chunk.length < chunkSize) {
+                      hasMore = false;
+                    }
+                  }
+                }
+                this.logger.log(`Loaded ${fileFeatures.length} features from ${path.basename(gpkgPath)} using queryForChunk pagination`);
+              } catch (e) {
+                this.logger.warn(`queryForChunk pagination failed: ${e}`);
+              }
+            }
+          } catch (e) {
+            this.logger.error(`Could not get features using alternative methods: ${e}`);
+          }
+          
+          if (fileFeatures.length === 0) {
+            this.logger.warn(`No features loaded from ${path.basename(gpkgPath)} - available methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(featureDao)).filter(n => typeof (featureDao as any)[n] === 'function').join(', ')}`);
+            continue;
+          }
+        }
+
+        this.logger.log(`Loaded ${fileFeatures.length} features from ${path.basename(gpkgPath)}`);
+        
+        // Log sample feature structure for debugging
+        if (fileFeatures.length > 0) {
+          const sample = fileFeatures[0];
+          const keys = Object.keys(sample);
+          this.logger.log(`Sample feature from ${path.basename(gpkgPath)}: ${keys.join(', ')}`);
+          
+          // Try to convert first feature to see structure
+          if (typeof sample.toGeoJSON === "function") {
+            try {
+              const geoJson = sample.toGeoJSON();
+              this.logger.log(`Sample feature toGeoJSON() result type: ${geoJson?.type}, has geometry: ${!!geoJson?.geometry}`);
+            } catch (e) {
+              this.logger.warn(`Could not convert sample feature to GeoJSON: ${e}`);
+            }
+          }
+          
+          // Check geom property structure
+          if (sample.geom) {
+            const geomKeys = Object.keys(sample.geom);
+            this.logger.log(`Sample feature geom type: ${typeof sample.geom}, keys: ${geomKeys.join(', ')}`);
+            this.logger.log(`Sample feature geom methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(sample.geom)).filter(n => typeof sample.geom[n] === 'function').join(', ')}`);
+          }
+          
+          // Check if feature itself has geometry conversion methods
+          const featureMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(sample)).filter(n => typeof sample[n] === 'function' && (n.includes('geo') || n.includes('Geo') || n.includes('geometry') || n.includes('Geometry')));
+          if (featureMethods.length > 0) {
+            this.logger.log(`Sample feature geometry-related methods: ${featureMethods.join(', ')}`);
+          }
+        }
+        
+        allFeatures = allFeatures.concat(fileFeatures);
+      } catch (error: any) {
+        this.logger.error(`Error loading features from ${path.basename(gpkgPath)}: ${error}`);
+        // Continue with other files even if one fails
+        continue;
+      }
+    }
+
+    this.logger.log(`Total features loaded from all GeoPackages: ${allFeatures.length}`);
+
+    if (allFeatures.length === 0) {
+      this.logger.warn("No features loaded from any GeoPackage file!");
+      return null;
+    }
+
+    // Log bbox for debugging
+    this.logger.log(`Search bbox: minX=${minX}, maxX=${maxX}, minY=${minY}, maxY=${maxY}`);
+    this.logger.log(`Click point: lat=${lat}, lng=${lng}, radiusMeters=${radiusMeters}`);
+
+    // Filter by bbox in memory (features from FeatureIndexManager should already be filtered)
+    // But we still need to extract geometry and filter by exact distance
+    
+    let filteredCount = 0;
+    let geometryExtractionFailures = 0;
+    let sampleGeomInspected = false;
+    
+    const features = allFeatures.filter((f: any) => {
+        // Extract geometry - handle different formats
+        let geom: any = null;
+        
+        // The geom property is a Buffer (binary geometry blob from GeoPackage)
+        // We need to parse it using GeoPackage's GeometryData utilities
+        if (!geom && f.geom) {
+          try {
+            // Check if it's already GeoJSON (shouldn't be, but just in case)
+            if (f.geom.type && f.geom.coordinates) {
+              geom = f.geom;
+            } else if (Buffer.isBuffer(f.geom) || (f.geom instanceof Uint8Array) || (typeof f.geom.readUInt8 === 'function')) {
+              // It's a binary buffer - parse it using GeoPackageAPI.parseGeometryData
+              try {
+                // Use GeoPackageAPI.parseGeometryData to parse the binary geometry
+                if (typeof GeoPackageAPI.parseGeometryData === "function") {
+                  const geometryData = GeoPackageAPI.parseGeometryData(f.geom);
+                  
+                  if (geometryData) {
+                    // Convert to GeoJSON
+                    if (typeof geometryData.toGeoJSON === "function") {
+                      const geoJson = geometryData.toGeoJSON();
+                      geom = geoJson?.geometry || geoJson;
+                    } else if (typeof geometryData.getGeometry === "function") {
+                      const geometryObj = geometryData.getGeometry();
+                      if (geometryObj) {
+                        if (typeof geometryObj.toGeoJSON === "function") {
+                          const geoJson = geometryObj.toGeoJSON();
+                          geom = geoJson?.geometry || geoJson;
+                        } else if (geometryObj.coordinates) {
+                          geom = geometryObj;
+                        }
+                      }
+                    }
+                  }
+                } else if (GeometryData) {
+                  // Fallback: try using GeometryData constructor directly
+                  try {
+                    const geometryData = new GeometryData(f.geom);
+                    if (typeof geometryData.toGeoJSON === "function") {
+                      const geoJson = geometryData.toGeoJSON();
+                      geom = geoJson?.geometry || geoJson;
+                    }
+                  } catch (e) {
+                    // Ignore
+                  }
+                }
+                
+                if (!geom && !sampleGeomInspected) {
+                  this.logger.warn(`Could not parse geometry buffer - parseGeometryData available: ${typeof GeoPackageAPI.parseGeometryData === 'function'}, GeometryData available: ${!!GeometryData}`);
+                  sampleGeomInspected = true;
+                }
+              } catch (parseError: any) {
+                if (!sampleGeomInspected) {
+                  this.logger.warn(`Failed to parse geometry buffer: ${parseError?.message || parseError}`);
+                  sampleGeomInspected = true;
+                }
+              }
+            }
+          } catch (e) {
+            // Ignore
+          }
+        }
+        
+        // Try toGeoJSON on the feature itself (fallback)
+        if (!geom && typeof f.toGeoJSON === "function") {
+          try {
+            const geoJson = f.toGeoJSON();
+            if (geoJson && geoJson.geometry) {
+              geom = geoJson.geometry;
+            } else if (geoJson && geoJson.coordinates) {
+              // Already a geometry object
+              geom = geoJson;
+            } else if (geoJson && geoJson.type === "Feature") {
+              geom = geoJson.geometry;
+            }
+          } catch (e) {
+            // Ignore
+          }
+        }
+        
+        // Fallback to other properties
+        if (!geom && f.geometry) {
+          geom = f.geometry;
+        } else if (!geom && f.type === "Feature" && f.geometry) {
+          geom = f.geometry;
+        }
+
+        if (!geom) {
+          geometryExtractionFailures++;
+          return false;
+        }
+
+        // Handle different geometry formats
+        if (typeof geom === "string") {
+          // Might be WKT, try to parse
+          try {
+            // For now, skip WKT strings
+            geometryExtractionFailures++;
+            return false;
+          } catch (e) {
+            geometryExtractionFailures++;
+            return false;
+          }
+        }
+
+        // Check if geom has coordinates directly or nested
+        if (!geom.coordinates) {
+          // Try to get coordinates from nested structure
+          if (geom.geometry && geom.geometry.coordinates) {
+            geom = geom.geometry;
+          } else {
+            geometryExtractionFailures++;
+            return false;
+          }
+        }
+        
+        if (!geom.coordinates) {
+          geometryExtractionFailures++;
+          return false;
+        }
+
+        // Store the extracted geometry on the feature for later use
+        (f as any)._extractedGeometry = geom;
+
+        // Extract all coordinates from LineString or MultiLineString
+        let coords: number[] = [];
+        if (geom.type === "LineString" && Array.isArray(geom.coordinates)) {
+          coords = geom.coordinates.flat();
+        } else if (geom.type === "MultiLineString" && Array.isArray(geom.coordinates)) {
+          coords = geom.coordinates.flat(2);
+        } else {
+          return false;
+        }
+
+        // Extract lngs and lats (coordinates are [lng, lat, ...] pairs)
+        const lngs: number[] = [];
+        const lats: number[] = [];
+        for (let i = 0; i < coords.length; i += 2) {
+          if (typeof coords[i] === "number" && typeof coords[i + 1] === "number") {
+            lngs.push(coords[i]);
+            lats.push(coords[i + 1]);
+          }
+        }
+
+        if (lngs.length === 0 || lats.length === 0) return false;
+
+        const featureMinLng = Math.min(...lngs);
+        const featureMaxLng = Math.max(...lngs);
+        const featureMinLat = Math.min(...lats);
+        const featureMaxLat = Math.max(...lats);
+
+        // Check if feature bbox overlaps with search bbox
+        const inBbox = (
+          featureMinLng <= maxX &&
+          featureMaxLng >= minX &&
+          featureMinLat <= maxY &&
+          featureMaxLat >= minY
+        );
+        
+        if (inBbox) {
+          filteredCount++;
+        }
+        
+        return inBbox;
+      });
+
+    this.logger.log(`Filtered ${filteredCount} features in bbox (${geometryExtractionFailures} geometry extraction failures)`);
+    this.logger.log(`Found ${features.length} candidate features in bbox`);
+
+    if (features.length === 0) {
+      this.logger.warn("No features found after filtering");
+      return null;
+    }
+
+    // Check if first feature has _extractedGeometry
+    if (features.length > 0) {
+      const firstFeature = features[0] as any;
+      this.logger.log(`First feature has _extractedGeometry: ${!!firstFeature._extractedGeometry}, type: ${firstFeature._extractedGeometry?.type}`);
+    }
+
+    let bestFeature: any = null;
+    let bestDistance = Infinity;
+    let processedCount = 0;
+    let distanceCalculationFailures = 0;
+
+    for (const row of features) {
+      // Features should have geometry extracted and stored in _extractedGeometry during filtering
+      let geom: any = (row as any)._extractedGeometry;
+      let feature: any = row;
+
+      // If geometry wasn't pre-extracted (shouldn't happen), try to extract it now
+      if (!geom) {
+        // Log first few missing geometries for debugging
+        if (processedCount < 3) {
+          this.logger.warn(`Feature missing _extractedGeometry (feature ${processedCount}), attempting to extract now...`);
+        }
+        // Try quick extraction - but this is a fallback
+        if (row.geom && typeof GeoPackageAPI.parseGeometryData === "function") {
+          try {
+            const geometryData = GeoPackageAPI.parseGeometryData(row.geom);
+            if (geometryData && typeof geometryData.toGeoJSON === "function") {
+              const geoJson = geometryData.toGeoJSON();
+              geom = geoJson?.geometry || geoJson;
+            }
+          } catch (e) {
+            // Skip this feature
+            continue;
+          }
+        } else {
+          continue;
+        }
+      }
+      
+      processedCount++;
+      
+      // Log first few to verify geometry structure
+      if (processedCount <= 3) {
+        this.logger.log(`Processing feature ${processedCount}, geom type: ${geom?.type}, has coordinates: ${!!geom?.coordinates}`);
+      }
+
+      let line: any = null;
+      if (geom.type === "LineString") {
+        line = geom;
+      } else if (geom.type === "MultiLineString") {
+        const fc = turf.flatten(geom);
+        if (fc.features.length > 0) {
+          line = fc.features[0].geometry;
+        }
+      }
+
+      if (!line) continue;
+
+      let snapped: any;
+      try {
+        snapped = (turf as any).nearestPointOnLine(line, clickPoint, {
+          units: "meters",
+        });
+      } catch (e: any) {
+        distanceCalculationFailures++;
+        if (distanceCalculationFailures <= 3) {
+          this.logger.warn(`Failed to compute nearestPointOnLine: ${e?.message || e}`);
+        }
+        continue;
+      }
+
+      const dist =
+        (snapped.properties && snapped.properties.dist) ??
+        (turf as any).distance(clickPoint, snapped, { units: "meters" });
+
+      if (
+        typeof dist === "number" &&
+        !isNaN(dist) &&
+        dist < bestDistance &&
+        dist <= radiusMeters
+      ) {
+        bestDistance = dist;
+        bestFeature = feature;
+        // Ensure the best feature has the extracted geometry (should already be set, but just in case)
+        if (!(bestFeature as any)._extractedGeometry && geom) {
+          (bestFeature as any)._extractedGeometry = geom;
+        }
+      }
+    }
+    
+    this.logger.log(`Processed ${processedCount} features, found nearest at ${bestDistance}m (${distanceCalculationFailures} distance calculation failures)`);
+
+    if (!bestFeature) {
+      return null;
+    }
+
+    // Extract properties - handle different formats
+    let props: any = {};
+    if (bestFeature.properties) {
+      props = bestFeature.properties;
+    } else if (bestFeature.type === "Feature" && bestFeature.properties) {
+      props = bestFeature.properties;
+    } else {
+      // Properties might be directly on the row object
+      props = { ...bestFeature };
+      // Remove geometry-related fields
+      delete props.geometry;
+      delete props.geom;
+      delete props.type;
+    }
+
+    // Also check if properties are methods that need to be called
+    if (typeof (bestFeature as any).getValue === "function") {
+      try {
+        const osmId = (bestFeature as any).getValue("osm_id");
+        if (osmId !== undefined) props.osm_id = osmId;
+        const name = (bestFeature as any).getValue("name");
+        if (name !== undefined) props.name = name;
+      } catch (e) {
+        // Ignore if getValue fails
+      }
+    }
+
+    const edgeId =
+      props[this.edgeIdColumn] ??
+      props["osm_id"] ??
+      props["full_id"] ??
+      String(props["fid"] ?? null); // fallback to fid if available
+
+    const roadName =
+      props[this.roadNameColumn] ??
+      props["name"] ??
+      props["highway"] ??
+      null;
+
+    // Extract geometry - use the pre-extracted GeoJSON geometry from _extractedGeometry
+    // This was already converted during the filtering phase
+    let geometry: any = (bestFeature as any)._extractedGeometry;
+    
+    this.logger.log(`Best feature _extractedGeometry: ${!!geometry}, type: ${geometry?.type}, isBuffer: ${Buffer.isBuffer(geometry)}`);
+    
+    // Fallback if _extractedGeometry wasn't set or is a Buffer (shouldn't happen)
+    if (!geometry || Buffer.isBuffer(geometry) || geometry.type === "Buffer") {
+      this.logger.warn("Best feature missing valid _extractedGeometry, attempting conversion from geom Buffer...");
+      
+      // Try to extract from bestFeature.geom directly (it's a Buffer)
+      if (bestFeature.geom && typeof GeoPackageAPI.parseGeometryData === "function") {
+        try {
+          const geometryData = GeoPackageAPI.parseGeometryData(bestFeature.geom);
+          if (geometryData && typeof geometryData.toGeoJSON === "function") {
+            const geoJson = geometryData.toGeoJSON();
+            geometry = geoJson?.geometry || geoJson;
+            this.logger.log(`Converted geometry from Buffer, new type: ${geometry?.type}`);
+          }
+        } catch (e: any) {
+          this.logger.warn(`Failed to convert final geometry to GeoJSON: ${e?.message || e}`);
+          geometry = null;
+        }
+      } else {
+        geometry = null;
+      }
+    }
+    
+    // Final validation - ensure it's proper GeoJSON (not a Buffer)
+    if (geometry) {
+      if (Buffer.isBuffer(geometry) || geometry.type === "Buffer") {
+        this.logger.warn("Geometry is still a Buffer after conversion attempt, setting to null");
+        geometry = null;
+      } else if (!geometry.type || !geometry.coordinates) {
+        this.logger.warn(`Geometry missing required fields: type=${geometry?.type}, hasCoords=${!!geometry?.coordinates}`);
+        geometry = null;
+      } else {
+        this.logger.log(`Geometry is valid GeoJSON: type=${geometry.type}, coordsLength=${Array.isArray(geometry.coordinates) ? geometry.coordinates.length : 'N/A'}`);
+      }
+    }
+
+    // Ensure geometry is properly converted to GeoJSON LineString
+    let finalGeometry: any = null;
+    
+    if (geometry && geometry.type && geometry.coordinates && !Buffer.isBuffer(geometry) && geometry.type !== "Buffer") {
+      // Already valid GeoJSON
+      finalGeometry = geometry;
+    } else if (bestFeature.geom && typeof GeoPackageAPI.parseGeometryData === "function") {
+      // Try to convert from Buffer one more time
+      try {
+        const geometryData = GeoPackageAPI.parseGeometryData(bestFeature.geom);
+        if (geometryData && typeof geometryData.toGeoJSON === "function") {
+          const geoJson = geometryData.toGeoJSON();
+          finalGeometry = geoJson?.geometry || geoJson;
+        }
+      } catch (e: any) {
+        this.logger.warn(`Final geometry conversion failed: ${e?.message || e}`);
+      }
+    }
+
+    // Return both formats: original format for backward compatibility
+    // and GeoJSON Feature for direct Google Maps consumption
+    return {
+      edgeId: edgeId ?? null,
+      distanceMeters:
+        typeof bestDistance === "number" && !isNaN(bestDistance) ? bestDistance : null,
+      roadName,
+      projectId: null,
+      geometry: finalGeometry, // LineString GeoJSON for map display
+    };
+  }
+
+  /**
+   * Convert NearestEdgeResult to GeoJSON Feature format for Google Maps
+   */
+  toGeoJsonFeature(result: NearestEdgeResult): NearestEdgeGeoJsonFeature | null {
+    if (!result.geometry || !result.edgeId) {
+      return null;
+    }
+
+    return {
+      type: "Feature",
+      properties: {
+        edgeId: result.edgeId,
+        distanceMeters: result.distanceMeters,
+        roadName: result.roadName,
+        projectId: result.projectId,
+      },
+      geometry: result.geometry as {
+        type: "LineString";
+        coordinates: number[][];
+      },
+    };
+  }
+}
+
+

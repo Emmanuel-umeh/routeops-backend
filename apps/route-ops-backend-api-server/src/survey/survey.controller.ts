@@ -281,6 +281,7 @@ export class SurveyController extends SurveyControllerBase {
             project: {
               select: {
                 createdBy: true,
+                description: true,
               },
             },
           } as any,
@@ -364,14 +365,75 @@ export class SurveyController extends SurveyControllerBase {
       creatorNameById.set(u.id, fullName || u.username || u.id);
     }
 
+    // Count anomalies per project for the surveys, using the same filters as the analytics
+    const projectIds = Array.from(
+      new Set(
+        recentSurveys
+          .map((s: any) => s.projectId)
+          .filter((id: string | null | undefined) => !!id)
+      )
+    ) as string[];
+
+    // Build hazard where clause for counting anomalies per project (same filters as analytics)
+    const anomalyCountWhere: any = {
+      edgeId,
+      projectId: { in: projectIds },
+    };
+
+    // Apply date filters
+    if (fromDate || toDate) {
+      anomalyCountWhere.createdAt = {};
+      if (fromDate) {
+        anomalyCountWhere.createdAt.gte = fromDate;
+      }
+      if (toDate) {
+        anomalyCountWhere.createdAt.lte = toDate;
+      }
+    }
+
+    // Apply exclusions
+    if (excludedAnomalyIds.length > 0) {
+      anomalyCountWhere.id = {
+        notIn: excludedAnomalyIds,
+      };
+    }
+
+    // Apply entity scoping
+    if (scopedCityHallId) {
+      anomalyCountWhere.project = {
+        cityHallId: scopedCityHallId,
+      };
+    }
+
+    // Count anomalies grouped by projectId
+    const anomalyCountsByProject = await this.prisma.hazard.groupBy({
+      by: ["projectId"],
+      where: anomalyCountWhere,
+      _count: {
+        id: true,
+      },
+    });
+
+    // Create a map of projectId -> anomaly count
+    const anomalyCountByProjectId = new Map<string, number>();
+    for (const result of anomalyCountsByProject) {
+      if (result.projectId) {
+        anomalyCountByProjectId.set(result.projectId, result._count.id);
+      }
+    }
+
     // Map recentSurveys to include the display name of the user who created the project (survey creator)
+    // the project description, and the anomaly count for that project
     const recentSurveysWithCreator = recentSurveys.map((survey: any) => {
       const { project, ...surveyWithoutProject } = survey;
       const creatorId = project?.createdBy as string | undefined;
+      const projectId = survey.projectId as string | undefined;
       return {
         ...surveyWithoutProject,
         createdBy: creatorId ?? null,
         createdByName: creatorId ? creatorNameById.get(creatorId) ?? null : null,
+        projectDescription: project?.description ?? null,
+        anomalyCount: projectId ? anomalyCountByProjectId.get(projectId) ?? 0 : 0,
       };
     });
 

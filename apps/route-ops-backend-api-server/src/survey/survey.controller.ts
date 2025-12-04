@@ -278,7 +278,12 @@ export class SurveyController extends SurveyControllerBase {
             startTime: true,
             endTime: true,
             eIriAvg: true,
-          },
+            project: {
+              select: {
+                createdBy: true,
+              },
+            },
+          } as any,
         }),
         this.prisma.hazard.findMany({
           where: hazardWhereBase,
@@ -331,6 +336,45 @@ export class SurveyController extends SurveyControllerBase {
 
     const uniqueUsers = Number(uniqueUserResult?.[0]?.count ?? 0);
 
+    // Resolve creator IDs to human-readable names
+    const creatorIds = Array.from(
+      new Set(
+        recentSurveys
+          .map((s: any) => s.project?.createdBy)
+          .filter((id: string | null | undefined) => !!id)
+      )
+    ) as string[];
+
+    const creators =
+      creatorIds.length > 0
+        ? await this.prisma.user.findMany({
+            where: { id: { in: creatorIds } },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              username: true,
+            },
+          })
+        : [];
+
+    const creatorNameById = new Map<string, string>();
+    for (const u of creators) {
+      const fullName = [u.firstName, u.lastName].filter(Boolean).join(" ").trim();
+      creatorNameById.set(u.id, fullName || u.username || u.id);
+    }
+
+    // Map recentSurveys to include the display name of the user who created the project (survey creator)
+    const recentSurveysWithCreator = recentSurveys.map((survey: any) => {
+      const { project, ...surveyWithoutProject } = survey;
+      const creatorId = project?.createdBy as string | undefined;
+      return {
+        ...surveyWithoutProject,
+        createdBy: creatorId ?? null,
+        createdByName: creatorId ? creatorNameById.get(creatorId) ?? null : null,
+      };
+    });
+
     // Map recentAnomalies to include projectName and anomalyName
     const recentAnomaliesWithNames = recentAnomalies.map((anomaly: any, index: number) => {
       const { project, ...anomalyWithoutProject } = anomaly;
@@ -350,7 +394,7 @@ export class SurveyController extends SurveyControllerBase {
       totalAnomalies,
       uniqueUsers,
       averageEiri: avg._avg.eIriAvg ?? null,
-      recentSurveys,
+      recentSurveys: recentSurveysWithCreator,
       recentAnomalies: recentAnomaliesWithNames,
     };
   }

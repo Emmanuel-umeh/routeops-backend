@@ -171,7 +171,33 @@ export class RoadsController {
       },
     });
 
-    return ratings;
+    if (ratings.length === 0) {
+      return [];
+    }
+
+    const roadIds = ratings.map((r) => r.roadId);
+
+    // Filter out roadIds that don't have at least 3 entries in RoadRatingHistory
+    const historyCounts = await this.prisma.roadRatingHistory.groupBy({
+      by: ["roadId"],
+      where: {
+        entityId: user.cityHallId,
+        roadId: { in: roadIds },
+      },
+      _count: {
+        roadId: true,
+      },
+    });
+
+    const roadIdsWithMinEntries = new Set<string>();
+    for (const count of historyCounts) {
+      if (count._count.roadId >= 3) {
+        roadIdsWithMinEntries.add(count.roadId);
+      }
+    }
+
+    // Return only ratings for roadIds with at least 3 history entries
+    return ratings.filter((r) => roadIdsWithMinEntries.has(r.roadId));
   }
 
   @Post("geometries")
@@ -327,10 +353,40 @@ export class RoadsController {
     const roadIds = allRatings.map((r) => r.roadId);
     const ratingByRoadId = new Map(allRatings.map((r) => [r.roadId, r.eiri]));
 
+    // Filter out roadIds that don't have at least 3 entries in RoadRatingHistory
+    // This removes ghost/erroneous road IDs that weren't actually surveyed
+    const historyCounts = await this.prisma.roadRatingHistory.groupBy({
+      by: ["roadId"],
+      where: {
+        entityId,
+        roadId: { in: roadIds },
+      },
+      _count: {
+        roadId: true,
+      },
+    });
+
+    const roadIdsWithMinEntries = new Set<string>();
+    for (const count of historyCounts) {
+      if (count._count.roadId >= 3) {
+        roadIdsWithMinEntries.add(count.roadId);
+      }
+    }
+
+    // Filter roadIds to only include those with at least 3 history entries
+    const validRoadIds = roadIds.filter((rid) => roadIdsWithMinEntries.has(rid));
+
+    if (validRoadIds.length === 0) {
+      console.log(`[RoadsController] No roadIds with at least 3 history entries. Total ratings: ${allRatings.length}, Valid: 0`);
+      return [];
+    }
+
+    console.log(`[RoadsController] Filtered ${roadIds.length} roadIds to ${validRoadIds.length} with at least 3 history entries`);
+
     // Build where clause for RoadRatingHistory to filter by time, operator, and status
     const historyWhere: any = {
       entityId,
-      roadId: { in: roadIds },
+      roadId: { in: validRoadIds },
     };
 
     // Date filters
@@ -369,7 +425,7 @@ export class RoadsController {
     if (parsedOperator || parsedStatus) {
       // Build survey filter for operator and status
       const surveyWhere: any = {
-        edgeIds: { hasSome: roadIds },
+        edgeIds: { hasSome: validRoadIds },
       };
 
       if (parsedStatus) {
@@ -398,7 +454,7 @@ export class RoadsController {
       for (const survey of surveys) {
         if (survey.edgeIds) {
           for (const rid of survey.edgeIds) {
-            if (roadIds.includes(rid)) {
+            if (validRoadIds.includes(rid)) {
               roadIdsFromSurveys.add(rid);
             }
           }

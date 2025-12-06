@@ -8,19 +8,21 @@ generator client {
 }
 
 model CityHall {
-  allowImages      Boolean   @default(true)
-  allowVideo       Boolean   @default(true)
-  createdAt        DateTime  @default(now())
-  defaultLatitude  Float?
-  defaultLongitude Float?
-  description      String?
-  gisFileUrl       String?
-  gisFileVersion   String?
-  id               String    @id @default(uuid())
-  name             String?
-  projects         Project[]
-  updatedAt        DateTime  @updatedAt
-  users            User[]
+  allowImages       Boolean             @default(true)
+  allowVideo        Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  defaultLatitude   Float?
+  defaultLongitude  Float?
+  description       String?
+  gisFileUrl        String?
+  gisFileVersion    String?
+  id                String              @id @default(uuid())
+  name              String?
+  projects          Project[]
+  updatedAt         DateTime            @updatedAt
+  users             User[]
+  roadRatingHistory RoadRatingHistory[]
+  roadRatings       RoadRating[]
 }
 
 model RoutePoint {
@@ -89,7 +91,7 @@ model Hazard {
   updatedAt    DateTime    @updatedAt
 
   /// Road segment / edge identifier this hazard belongs to (from geometry properties.edgeId)
-  edgeId       String?
+  edgeId String?
 
   @@index([edgeId])
 }
@@ -117,28 +119,29 @@ model Survey {
   updatedAt    DateTime  @updatedAt
 
   /// All distinct edgeIds this survey has traversed (denormalized for fast edge analytics)
-  edgeIds      String[]
+  edgeIds String[]
 
   @@index([edgeIds], type: Gin)
 }
 
 model User {
-  cityHall         CityHall?        @relation(fields: [cityHallId], references: [id])
-  cityHallId       String?
-  createdAt        DateTime         @default(now())
-  email            String?          @unique
-  firstName        String?
-  id               String           @id @default(uuid())
-  isActive         Boolean?
-  lastName         String?
-  password         String
-  remarks          Remark[]
-  role             EnumUserRole?
-  roles            Json
-  updatedAt        DateTime         @updatedAt
-  username         String           @unique
-  vehicleType      EnumVehicleType?
-  vehicleTypeOther String?
+  cityHall          CityHall?           @relation(fields: [cityHallId], references: [id])
+  cityHallId        String?
+  createdAt         DateTime            @default(now())
+  email             String?             @unique
+  firstName         String?
+  id                String              @id @default(uuid())
+  isActive          Boolean?
+  lastName          String?
+  password          String
+  remarks           Remark[]
+  role              EnumUserRole?
+  roles             Json
+  updatedAt         DateTime            @updatedAt
+  username          String              @unique
+  vehicleType       EnumVehicleType?
+  vehicleTypeOther  String?
+  roadRatingHistory RoadRatingHistory[]
 }
 
 enum EnumProjectStatus {
@@ -160,4 +163,34 @@ enum EnumVehicleType {
   bus
   police_vehicles
   other
+}
+
+model RoadRatingHistory {
+  id        String   @id @default(uuid())
+  entityId  String // CityHall.id
+  roadId    String // edgeId
+  eiri      Float // EIRI rating
+  userId    String // User.id who made the survey
+  createdAt DateTime @default(now())
+
+  entity CityHall @relation(fields: [entityId], references: [id])
+  user   User     @relation(fields: [userId], references: [id])
+
+  @@index([entityId, roadId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model RoadRating {
+  id        String   @id @default(uuid())
+  entityId  String // CityHall.id
+  roadId    String // edgeId
+  eiri      Float // Current/aggregated EIRI rating
+  updatedAt DateTime @default(now()) @updatedAt
+
+  entity CityHall @relation(fields: [entityId], references: [id])
+
+  @@unique([entityId, roadId])
+  @@index([entityId])
+  @@index([roadId])
 }

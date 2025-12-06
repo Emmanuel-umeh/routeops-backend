@@ -246,11 +246,22 @@ export class MobileService {
     // Verify project exists and belongs to user
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
-      select: { id: true, createdBy: true, status: true },
+      select: { id: true, createdBy: true, status: true, cityHallId: true },
     });
 
     if (!project) {
       throw new Error(`Project with id ${projectId} not found`);
+    }
+
+    // Get user's entityId (cityHallId)
+    const dbUser = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { cityHallId: true },
+    });
+    const entityId = project.cityHallId ?? dbUser?.cityHallId ?? null;
+
+    if (!entityId) {
+      throw new Error("Cannot save road ratings: project and user have no entityId (cityHallId)");
     }
 
     // Extract coordinates and bbox directly from incoming geometry; store as-is
@@ -404,6 +415,82 @@ export class MobileService {
           });
         }
       }
+    }
+
+    // Process road ratings: save history and update current ratings
+    // Group features by edgeId and collect eIri values
+    const edgeIdRatings = new Map<string, number[]>(); // roadId -> [eIri values]
+    
+    if (geometry?.type === "FeatureCollection") {
+      for (const f of geometry.features ?? []) {
+        const featureEdgeId =
+          (f as any)?.properties?.edgeId ??
+          (f as any)?.properties?.edge_id ??
+          (f as any)?.properties?.roadId ??
+          (f as any)?.properties?.road_id;
+        const eIri = Number((f as any)?.properties?.eIri ?? (f as any)?.properties?.eiri);
+        
+        if (
+          typeof featureEdgeId === "string" &&
+          featureEdgeId.trim().length > 0 &&
+          Number.isFinite(eIri) &&
+          eIri >= 0
+        ) {
+          if (!edgeIdRatings.has(featureEdgeId)) {
+            edgeIdRatings.set(featureEdgeId, []);
+          }
+          edgeIdRatings.get(featureEdgeId)!.push(eIri);
+        }
+      }
+    }
+
+    // Save to RoadRatingHistory and update RoadRating
+    for (const [roadId, eIriValues] of edgeIdRatings.entries()) {
+      // Calculate average eIri for this roadId in this survey
+      const avgEiri = eIriValues.reduce((a, b) => a + b, 0) / eIriValues.length;
+      
+      // Save to history (one entry per survey, using average)
+      await this.prisma.roadRatingHistory.create({
+        data: {
+          entityId,
+          roadId,
+          eiri: avgEiri,
+          userId: user.id,
+        },
+      });
+
+      // Update or create RoadRating (aggregate all ratings for this roadId)
+      // Get all historical ratings for this roadId to calculate overall average
+      const allRatings = await this.prisma.roadRatingHistory.findMany({
+        where: {
+          entityId,
+          roadId,
+        },
+        select: { eiri: true },
+      });
+
+      const overallAvgEiri =
+        allRatings.length > 0
+          ? allRatings.reduce((sum: number, r: { eiri: number }) => sum + r.eiri, 0) / allRatings.length
+          : avgEiri;
+
+      // Upsert RoadRating
+      await this.prisma.roadRating.upsert({
+        where: {
+          entityId_roadId: {
+            entityId,
+            roadId,
+          },
+        },
+        create: {
+          entityId,
+          roadId,
+          eiri: overallAvgEiri,
+        },
+        update: {
+          eiri: overallAvgEiri,
+        },
+      });
     }
 
     // Update project status to completed

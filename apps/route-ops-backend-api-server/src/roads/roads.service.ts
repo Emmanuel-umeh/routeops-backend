@@ -784,6 +784,106 @@ export class RoadsService {
       },
     };
   }
+
+  /**
+   * Get geometries for specific roadIds (edgeIds) from GeoPackage files
+   * Returns a map of roadId -> GeoJSON geometry
+   */
+  async getGeometriesByRoadIds(roadIds: string[]): Promise<Map<string, any>> {
+    const result = new Map<string, any>();
+    if (!roadIds || roadIds.length === 0) {
+      return result;
+    }
+
+    const gpkgFiles = await this.getGeoPackageFiles();
+    const roadIdSet = new Set(roadIds.map(id => String(id)));
+
+    for (const gpkgPath of gpkgFiles) {
+      const cacheEntry = await this.getFeatureDaoForFile(gpkgPath);
+      if (!cacheEntry) continue;
+
+      const { featureDao, tableName } = cacheEntry;
+
+      try {
+        // Query all features and filter by roadId
+        const allFeatures = await featureDao.queryForAll();
+        this.logger.log(`Checking ${allFeatures.length} features in ${path.basename(gpkgPath)} for ${roadIds.length} roadIds`);
+
+        for (const f of allFeatures) {
+          // Extract edgeId from feature
+          let featureEdgeId: string | null = null;
+          if (typeof (f as any).getValue === "function") {
+            try {
+              featureEdgeId = String((f as any).getValue(this.edgeIdColumn) ?? (f as any).getValue("osm_id") ?? (f as any).getValue("full_id") ?? "");
+            } catch (e) {
+              // Ignore
+            }
+          } else {
+            featureEdgeId = String((f as any)[this.edgeIdColumn] ?? (f as any).osm_id ?? (f as any).full_id ?? "");
+          }
+
+          if (!featureEdgeId || !roadIdSet.has(featureEdgeId)) {
+            continue;
+          }
+
+          // Extract geometry
+          let geom: any = null;
+          const geomProp = (f as any).geom ?? (f as any).geometry;
+          
+          if (geomProp && geomProp.type && geomProp.coordinates) {
+            geom = geomProp;
+          } else if (Buffer.isBuffer(geomProp) || (geomProp instanceof Uint8Array)) {
+            try {
+              if (typeof GeoPackageAPI.parseGeometryData === "function") {
+                const geometryData = GeoPackageAPI.parseGeometryData(geomProp);
+                if (geometryData) {
+                  if (typeof geometryData.toGeoJSON === "function") {
+                    const geoJson = geometryData.toGeoJSON();
+                    geom = geoJson?.geometry || geoJson;
+                  } else if (typeof geometryData.getGeometry === "function") {
+                    const geometryObj = geometryData.getGeometry();
+                    if (geometryObj && typeof geometryObj.toGeoJSON === "function") {
+                      const geoJson = geometryObj.toGeoJSON();
+                      geom = geoJson?.geometry || geoJson;
+                    }
+                  }
+                }
+              } else if (GeometryData) {
+                try {
+                  const geometryData = new GeometryData(geomProp);
+                  if (typeof geometryData.toGeoJSON === "function") {
+                    const geoJson = geometryData.toGeoJSON();
+                    geom = geoJson?.geometry || geoJson;
+                  }
+                } catch (e) {
+                  // Ignore
+                }
+              }
+            } catch (e) {
+              // Ignore geometry extraction errors
+            }
+          }
+
+          if (geom && (geom.type === "LineString" || geom.type === "MultiLineString")) {
+            // Convert MultiLineString to LineString if needed
+            if (geom.type === "MultiLineString" && Array.isArray(geom.coordinates) && geom.coordinates.length > 0) {
+              geom = {
+                type: "LineString",
+                coordinates: geom.coordinates[0],
+              };
+            }
+            result.set(featureEdgeId, geom);
+            roadIdSet.delete(featureEdgeId); // Remove from set to avoid duplicate searches
+            if (roadIdSet.size === 0) break; // All roadIds found
+          }
+        }
+      } catch (error: any) {
+        this.logger.warn(`Error querying ${path.basename(gpkgPath)}: ${error?.message || error}`);
+      }
+    }
+
+    return result;
+  }
 }
 
 

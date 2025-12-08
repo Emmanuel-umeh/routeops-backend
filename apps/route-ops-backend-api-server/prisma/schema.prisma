@@ -125,23 +125,25 @@ model Survey {
 }
 
 model User {
-  cityHall          CityHall?           @relation(fields: [cityHallId], references: [id])
-  cityHallId        String?
-  createdAt         DateTime            @default(now())
-  email             String?             @unique
-  firstName         String?
-  id                String              @id @default(uuid())
-  isActive          Boolean?
-  lastName          String?
-  password          String
-  remarks           Remark[]
-  role              EnumUserRole?
-  roles             Json
-  updatedAt         DateTime            @updatedAt
-  username          String              @unique
-  vehicleType       EnumVehicleType?
-  vehicleTypeOther  String?
-  roadRatingHistory RoadRatingHistory[]
+  cityHall                    CityHall?           @relation(fields: [cityHallId], references: [id])
+  cityHallId                  String?
+  createdAt                   DateTime            @default(now())
+  email                       String?             @unique
+  firstName                   String?
+  id                          String              @id @default(uuid())
+  isActive                    Boolean?
+  lastName                    String?
+  password                    String
+  passwordResetToken          String?
+  passwordResetTokenExpiresAt DateTime?
+  remarks                     Remark[]
+  role                        EnumUserRole?
+  roles                       Json
+  updatedAt                   DateTime            @updatedAt
+  username                    String              @unique
+  vehicleType                 EnumVehicleType?
+  vehicleTypeOther            String?
+  roadRatingHistory           RoadRatingHistory[]
 }
 
 enum EnumProjectStatus {

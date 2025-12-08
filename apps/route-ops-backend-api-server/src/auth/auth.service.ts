@@ -10,13 +10,15 @@ import { ForgotPasswordResponseDto } from "./dto/ForgotPasswordResponseDto";
 import { ResetPasswordResponseDto } from "./dto/ResetPasswordResponseDto";
 import { randomBytes } from "crypto";
 import { CurrentUserResponseDto } from "./dto/CurrentUserResponseDto";
+import { EmailService } from "../providers/email/email.service";
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly passwordService: PasswordService,
     private readonly tokenService: TokenService,
-    private readonly userService: UserService
+    private readonly userService: UserService,
+    private readonly emailService: EmailService
   ) {}
 
   async validateUser(
@@ -81,67 +83,90 @@ export class AuthService {
       };
     }
 
+    // Check if user has an email address
+    if (!user.email) {
+      // Don't reveal if user exists or not for security
+      return {
+        message: "If an account with that username or email exists, password reset instructions have been sent."
+      };
+    }
+
     // Generate reset token
     const resetToken = randomBytes(32).toString('hex');
     
-    // Store reset token in user record (we'll add a field for this)
-    // For now, we'll use a simple approach - in production, you'd want a separate table
+    // Set token expiration to 1 hour from now
+    const tokenExpiresAt = new Date();
+    tokenExpiresAt.setHours(tokenExpiresAt.getHours() + 1);
+    
+    // Store reset token and expiration in user record
     await this.userService.updateUser({
       where: { id: user.id },
       data: {
-        // We'll store the token in a custom field or use a separate table
-        // For now, let's use a simple approach with a comment field
-        // In production, create a separate PasswordResetToken table
+        passwordResetToken: resetToken,
+        passwordResetTokenExpiresAt: tokenExpiresAt,
       }
     });
 
-    // In development, return the token
-    // In production, send email with reset link
+    // Send email with reset link
+    try {
+      await this.emailService.sendPasswordResetEmail(user.email, resetToken);
+    } catch (error) {
+      // Log error but don't reveal to user for security
+      console.error("Failed to send password reset email:", error);
+      // Still return success message to prevent user enumeration
+    }
+
+    // In development, also return the token for testing
     const isDevelopment = process.env.NODE_ENV !== 'production';
     
     if (isDevelopment) {
-      console.log(`🔑 Password reset token for ${user.username}: ${resetToken}`);
       return {
         message: "Password reset instructions have been sent to your email address.",
         resetToken: resetToken
       };
     }
-
-    // TODO: Send email with reset link in production
-    // await this.emailService.sendPasswordResetEmail(user.email, resetToken);
     
     return {
-      message: "Password reset instructions have been sent to your email address."
+      message: "If an account with that username or email exists, password reset instructions have been sent."
     };
   }
 
   async resetPassword(data: ResetPasswordDto): Promise<ResetPasswordResponseDto> {
     const { token, newPassword } = data;
     
-    // In a real implementation, you'd validate the token from a database
-    // For now, we'll implement a simple version
-    // TODO: Implement proper token validation with expiration
-    
-    // Find user by reset token (you'd need to add this field to the user model)
-    // For now, we'll use a placeholder
-    const user = await this.userService.user({
+    // Find user by reset token
+    const users = await this.userService.users({
       where: {
-        // In production, you'd have a resetToken field or separate table
-        id: "placeholder" // This is a simplified version
+        passwordResetToken: token
       }
     });
+    
+    const user = users.length > 0 ? users[0] : null;
 
     if (!user) {
       throw new BadRequestException("Invalid or expired reset token");
     }
 
-    // Update password
+    // Check if token has expired
+    if (!user.passwordResetTokenExpiresAt || user.passwordResetTokenExpiresAt < new Date()) {
+      // Clear the expired token
+      await this.userService.updateUser({
+        where: { id: user.id },
+        data: {
+          passwordResetToken: null,
+          passwordResetTokenExpiresAt: null,
+        }
+      });
+      throw new BadRequestException("Invalid or expired reset token");
+    }
+
+    // Update password and clear reset token
     await this.userService.updateUser({
       where: { id: user.id },
       data: {
         password: newPassword, // This will be hashed by the service
-        // Clear the reset token
-        // resetToken: null
+        passwordResetToken: null,
+        passwordResetTokenExpiresAt: null,
       }
     });
 

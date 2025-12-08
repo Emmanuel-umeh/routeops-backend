@@ -6,6 +6,7 @@ import { JWT_EXPIRATION } from "../constants";
 import { SecretsManagerModule } from "../providers/secrets/secretsManager.module";
 import { SecretsManagerService } from "../providers/secrets/secretsManager.service";
 import { EnumSecretsNameKey } from "../providers/secrets/secretsNameKey.enum";
+import { EmailModule } from "../providers/email/email.module";
 import { AuthController } from "./auth.controller";
 import { AuthResolver } from "./auth.resolver";
 import { AuthService } from "./auth.service";
@@ -19,6 +20,7 @@ import { UserModule } from "../user/user.module";
     forwardRef(() => UserModule),
     PassportModule,
     SecretsManagerModule,
+    EmailModule,
     JwtModule.registerAsync({
       imports: [SecretsManagerModule],
       inject: [SecretsManagerService, ConfigService],

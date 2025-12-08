@@ -248,11 +248,27 @@ export class SurveyController extends SurveyControllerBase {
     const surveyWhere: any = { ...surveyWhereBase };
     const hazardWhere: any = { ...hazardWhereBase };
 
+    // When surveys are excluded, also exclude anomalies from those surveys' projects
+    let excludedProjectIds: string[] = [];
     if (excludedSurveyIds.length > 0) {
       surveyWhere.id = {
         ...(surveyWhere.id || {}),
         notIn: excludedSurveyIds,
       };
+
+      // Get projectIds of excluded surveys so we can exclude their anomalies too
+      const excludedSurveys = await this.prisma.survey.findMany({
+        where: {
+          id: { in: excludedSurveyIds },
+        },
+        select: {
+          projectId: true,
+        },
+      });
+
+      excludedProjectIds = excludedSurveys
+        .map((s) => s.projectId)
+        .filter((id): id is string => id !== null && id !== undefined);
     }
 
     if (excludedAnomalyIds.length > 0) {
@@ -262,10 +278,17 @@ export class SurveyController extends SurveyControllerBase {
       };
     }
 
-    const [totalSurveys, totalAnomalies, recentSurveys, recentAnomalies, avg] =
+    // Exclude anomalies from excluded surveys' projects
+    if (excludedProjectIds.length > 0) {
+      hazardWhere.projectId = {
+        ...(hazardWhere.projectId || {}),
+        notIn: excludedProjectIds,
+      };
+    }
+
+    const [totalSurveys, recentSurveys, recentAnomaliesRaw, avg] =
       await this.prisma.$transaction([
         this.prisma.survey.count({ where: surveyWhere }),
-        this.prisma.hazard.count({ where: hazardWhere }),
         this.prisma.survey.findMany({
           where: surveyWhereBase,
           orderBy: { startTime: "desc" },
@@ -287,9 +310,9 @@ export class SurveyController extends SurveyControllerBase {
           } as any,
         }),
         this.prisma.hazard.findMany({
-          where: hazardWhereBase,
+          where: hazardWhere, // Use hazardWhere with exclusions applied
           orderBy: { createdAt: "desc" },
-          take: 20,
+          take: 100, // Fetch more initially, then filter by project
           select: {
             id: true,
             projectId: true,
@@ -365,7 +388,7 @@ export class SurveyController extends SurveyControllerBase {
       creatorNameById.set(u.id, fullName || u.username || u.id);
     }
 
-    // Count anomalies per project for the surveys, using the same filters as the analytics
+    // Get projectIds from recentSurveys to filter anomalies
     const projectIds = Array.from(
       new Set(
         recentSurveys
@@ -373,6 +396,29 @@ export class SurveyController extends SurveyControllerBase {
           .filter((id: string | null | undefined) => !!id)
       )
     ) as string[];
+
+    // Filter recentAnomalies to only include anomalies from projects in recentSurveys
+    // This ensures every anomaly shown has a corresponding survey (or at least a survey from the same project)
+    const recentAnomalies = recentAnomaliesRaw
+      .filter((a: any) => a.projectId && projectIds.includes(a.projectId))
+      .slice(0, 20); // Limit to 20 after filtering
+
+    // Count total anomalies only from projects in recentSurveys
+    // This ensures totalAnomalies matches what's actually shown in recentAnomalies
+    const totalAnomaliesWhere: any = { ...hazardWhere };
+    if (projectIds.length > 0) {
+      totalAnomaliesWhere.projectId = {
+        ...(totalAnomaliesWhere.projectId || {}),
+        in: projectIds,
+      };
+    } else {
+      // If no surveys, no anomalies should be counted
+      totalAnomaliesWhere.projectId = { in: [] };
+    }
+
+    const totalAnomalies = await this.prisma.hazard.count({
+      where: totalAnomaliesWhere,
+    });
 
     // Build hazard where clause for counting anomalies per project (same filters as analytics)
     const anomalyCountWhere: any = {
@@ -395,6 +441,14 @@ export class SurveyController extends SurveyControllerBase {
     if (excludedAnomalyIds.length > 0) {
       anomalyCountWhere.id = {
         notIn: excludedAnomalyIds,
+      };
+    }
+
+    // Exclude anomalies from excluded surveys' projects
+    if (excludedProjectIds.length > 0) {
+      anomalyCountWhere.projectId = {
+        ...(anomalyCountWhere.projectId || {}),
+        notIn: excludedProjectIds,
       };
     }
 
@@ -448,6 +502,15 @@ export class SurveyController extends SurveyControllerBase {
       };
     });
 
+    // Calculate daily EIRI data for the last 7 days
+    const dailyEiriData = await this.calculateDailyEiriData(
+      edgeId,
+      fromDate,
+      toDate,
+      surveyWhere,
+      scopedCityHallId
+    );
+
     return {
       edgeId,
       from: fromDate ?? null,
@@ -458,7 +521,120 @@ export class SurveyController extends SurveyControllerBase {
       averageEiri: avg._avg.eIriAvg ?? null,
       recentSurveys: recentSurveysWithCreator,
       recentAnomalies: recentAnomaliesWithNames,
+      dailyEiriData,
     };
+  }
+
+  private async calculateDailyEiriData(
+    edgeId: string,
+    fromDate: Date | undefined,
+    toDate: Date | undefined,
+    surveyWhere: any,
+    scopedCityHallId: string | null
+  ): Promise<Array<{
+    date: string;
+    day: string;
+    dayNumber: number;
+    month: string;
+    value: number | null;
+  }>> {
+    // Determine the end date (use toDate if provided, otherwise use today)
+    const endDate = toDate ? new Date(toDate) : new Date();
+    endDate.setHours(23, 59, 59, 999); // End of day
+
+    // Calculate start date (6 days before end date for 7 days total)
+    // If fromDate is provided and it's within 7 days of endDate, use it as the start
+    // Otherwise, use 6 days before endDate
+    let startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - 6);
+    startDate.setHours(0, 0, 0, 0); // Start of day
+
+    if (fromDate) {
+      const fromDateNormalized = new Date(fromDate);
+      fromDateNormalized.setHours(0, 0, 0, 0);
+      // If fromDate is more recent than 6 days ago, use it
+      // Otherwise, keep the 7-day window ending at endDate
+      if (fromDateNormalized > startDate) {
+        startDate = fromDateNormalized;
+      }
+    }
+
+    // Build where clause for surveys (respecting exclusions)
+    // Remove date filters from surveyWhere since we're applying our own 7-day window
+    const { startTime, ...surveyWhereWithoutDate } = surveyWhere;
+    const dailySurveyWhere: any = {
+      ...surveyWhereWithoutDate,
+      startTime: {
+        gte: startDate,
+        lte: endDate,
+      },
+      eIriAvg: { not: null }, // Only include surveys with EIRI data
+    };
+
+    // Fetch surveys for the date range
+    const surveys = await this.prisma.survey.findMany({
+      where: dailySurveyWhere,
+      select: {
+        startTime: true,
+        eIriAvg: true,
+      },
+      orderBy: { startTime: "asc" },
+    });
+
+    // Group surveys by date (YYYY-MM-DD)
+    const surveysByDate = new Map<string, number[]>();
+    for (const survey of surveys) {
+      if (!survey.startTime || survey.eIriAvg === null || survey.eIriAvg === undefined) {
+        continue;
+      }
+      const date = new Date(survey.startTime);
+      const dateKey = date.toISOString().split("T")[0]; // YYYY-MM-DD
+      
+      if (!surveysByDate.has(dateKey)) {
+        surveysByDate.set(dateKey, []);
+      }
+      surveysByDate.get(dateKey)!.push(survey.eIriAvg);
+    }
+
+    // Generate array for last 7 days
+    const dailyData: Array<{
+      date: string;
+      day: string;
+      dayNumber: number;
+      month: string;
+      value: number | null;
+    }> = [];
+
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+    for (let i = 0; i < 7; i++) {
+      const currentDate = new Date(startDate);
+      currentDate.setDate(startDate.getDate() + i);
+      
+      const dateKey = currentDate.toISOString().split("T")[0];
+      const dayOfWeek = currentDate.getDay();
+      const dayNumber = currentDate.getDate();
+      const monthIndex = currentDate.getMonth();
+
+      // Calculate average EIRI for this day if surveys exist
+      let value: number | null = null;
+      const daySurveys = surveysByDate.get(dateKey);
+      if (daySurveys && daySurveys.length > 0) {
+        const sum = daySurveys.reduce((a, b) => a + b, 0);
+        value = Math.round((sum / daySurveys.length) * 100) / 100; // Round to 2 decimal places
+      }
+
+      dailyData.push({
+        date: dateKey,
+        day: dayNames[dayOfWeek],
+        dayNumber,
+        month: monthNames[monthIndex],
+        value,
+      });
+    }
+
+    return dailyData;
   }
 }
 

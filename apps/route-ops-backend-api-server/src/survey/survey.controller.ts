@@ -244,19 +244,9 @@ export class SurveyController extends SurveyControllerBase {
       }
     }
 
-    // Clone base filters for aggregates and apply exclusions only there
-    const surveyWhere: any = { ...surveyWhereBase };
-    const hazardWhere: any = { ...hazardWhereBase };
-
-    // When surveys are excluded, also exclude anomalies from those surveys' projects
+    // When surveys are excluded, get their projectIds to exclude from history
     let excludedProjectIds: string[] = [];
     if (excludedSurveyIds.length > 0) {
-      surveyWhere.id = {
-        ...(surveyWhere.id || {}),
-        notIn: excludedSurveyIds,
-      };
-
-      // Get projectIds of excluded surveys so we can exclude their anomalies too
       const excludedSurveys = await this.prisma.survey.findMany({
         where: {
           id: { in: excludedSurveyIds },
@@ -271,104 +261,120 @@ export class SurveyController extends SurveyControllerBase {
         .filter((id): id is string => id !== null && id !== undefined);
     }
 
-    if (excludedAnomalyIds.length > 0) {
-      hazardWhere.id = {
-        ...(hazardWhere.id || {}),
-        notIn: excludedAnomalyIds,
+    // OPTIMIZED: Use RoadRatingHistory as primary source instead of Survey table
+    // Build where clause for RoadRatingHistory
+    const historyWhere: any = {
+      roadId: edgeId,
+    };
+
+    if (scopedCityHallId) {
+      historyWhere.entityId = scopedCityHallId;
+    }
+
+    if (fromDate || toDate) {
+      historyWhere.createdAt = {};
+      if (fromDate) {
+        historyWhere.createdAt.gte = fromDate;
+      }
+      if (toDate) {
+        historyWhere.createdAt.lte = toDate;
+      }
+    }
+
+    if (excludedSurveyIds.length > 0) {
+      historyWhere.surveyId = {
+        notIn: excludedSurveyIds,
       };
     }
 
-    // Exclude anomalies from excluded surveys' projects
-    if (excludedProjectIds.length > 0) {
-      hazardWhere.projectId = {
-        ...(hazardWhere.projectId || {}),
-        notIn: excludedProjectIds,
-      };
-    }
+    // OPTIMIZED: Get RoadRatingHistory entries without nested includes (much faster)
+    // Nested includes with survey->project are very slow. Fetch data separately instead.
+    const transactionResult = await this.prisma.$transaction([
+      this.prisma.roadRatingHistory.findMany({
+        where: historyWhere,
+        select: {
+          id: true,
+          roadId: true,
+          eiri: true,
+          userId: true,
+          surveyId: true,
+          projectId: true,
+          anomaliesCount: true,
+          createdAt: true,
+        } as any,
+        orderBy: { createdAt: "desc" },
+      }),
+      this.prisma.roadRatingHistory.aggregate({
+        where: historyWhere,
+        _avg: { eiri: true },
+      }),
+    ]);
+    const historyEntries = transactionResult[0] as any[];
+    const avgResult = transactionResult[1];
 
-    const [totalSurveys, recentSurveys, recentAnomaliesRaw, avg] =
-      await this.prisma.$transaction([
-        this.prisma.survey.count({ where: surveyWhere }),
-        this.prisma.survey.findMany({
-          where: surveyWhereBase,
-          orderBy: { startTime: "desc" },
-          take: 20,
-          select: {
-            id: true,
-            projectId: true,
-            name: true,
-            status: true,
-            startTime: true,
-            endTime: true,
-            eIriAvg: true,
-            project: {
-              select: {
-                createdBy: true,
-                description: true,
-              },
-            },
-          } as any,
-        }),
-        this.prisma.hazard.findMany({
-          where: hazardWhere, // Use hazardWhere with exclusions applied
-          orderBy: { createdAt: "desc" },
-          take: 100, // Fetch more initially, then filter by project
-          select: {
-            id: true,
-            projectId: true,
-            name: true,
-            imageUrl: true,
-            latitude: true,
-            longitude: true,
-            severity: true,
-            typeField: true,
-            createdAt: true,
-            project: {
-              select: {
-                name: true,
-              },
-            },
-          } as any,
-        }),
-        this.prisma.survey.aggregate({
-          where: {
-            ...surveyWhere,
-            eIriAvg: { not: null },
-          },
-          _avg: { eIriAvg: true },
-        }),
-      ]);
-
-    // Unique users who created projects for these edge surveys
-    const uniqueUserResult = await this.prisma.$queryRawUnsafe<{ count: string }[]>(
-      `
-      SELECT COUNT(DISTINCT "Project"."createdBy")::text AS count
-      FROM "Survey"
-      JOIN "Project" ON "Survey"."projectId" = "Project"."id"
-      WHERE $1 = ANY("Survey"."edgeIds")
-        AND ($2::timestamptz IS NULL OR "Survey"."startTime" >= $2)
-        AND ($3::timestamptz IS NULL OR "Survey"."startTime" <= $3)
-        AND ($4::text[] IS NULL OR NOT ("Survey"."id" = ANY($4::text[])))
-        AND ($5::text IS NULL OR "Project"."cityHallId" = $5::text)
-    `,
-      edgeId,
-      fromDate ?? null,
-      toDate ?? null,
-      excludedSurveyIds.length > 0 ? excludedSurveyIds : null,
-      scopedCityHallId
+    // Get unique projectIds from history entries that have projectId
+    const projectIdsFromHistory = Array.from(
+      new Set((historyEntries as any[]).map((h: any) => h.projectId).filter((id: any): id is string => id !== null))
     );
 
-    const uniqueUsers = Number(uniqueUserResult?.[0]?.count ?? 0);
+    // Fetch projects and surveys in parallel (only for entries that have IDs)
+    const [projects, surveys] = await Promise.all([
+      projectIdsFromHistory.length > 0
+        ? this.prisma.project.findMany({
+            where: { id: { in: projectIdsFromHistory } },
+            select: {
+              id: true,
+              name: true,
+              createdBy: true,
+              description: true,
+              cityHallId: true,
+            },
+          })
+        : Promise.resolve([]),
+      (historyEntries as any[])
+        .map((h: any) => h.surveyId)
+        .filter((id: any): id is string => id !== null).length > 0
+        ? this.prisma.survey.findMany({
+            where: {
+              id: {
+                in: (historyEntries as any[])
+                  .map((h: any) => h.surveyId)
+                  .filter((id: any): id is string => id !== null),
+              },
+            },
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              startTime: true,
+              endTime: true,
+              eIriAvg: true,
+              projectId: true,
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    // Create lookup maps
+    const projectById = new Map(projects.map((p) => [p.id, p]));
+    const surveyById = new Map(surveys.map((s) => [s.id, s]));
+
+    // Calculate totals from history entries - only count entries with valid survey data
+    // This ensures totalSurveys matches what users can actually see in recentSurveys
+    const validHistoryEntries = (historyEntries as any[]).filter(
+      (h: any) => h.surveyId && surveyById.has(h.surveyId)
+    );
+    const totalSurveys = validHistoryEntries.length;
+    const averageEiri = avgResult._avg.eiri ?? null;
+
+    // Get unique users (project creators) from projects
+    const uniqueCreatorIds = new Set(
+      projects.map((p) => p.createdBy).filter((id): id is string => id !== null && id !== undefined)
+    );
+    const uniqueUsers = uniqueCreatorIds.size;
 
     // Resolve creator IDs to human-readable names
-    const creatorIds = Array.from(
-      new Set(
-        recentSurveys
-          .map((s: any) => s.project?.createdBy)
-          .filter((id: string | null | undefined) => !!id)
-      )
-    ) as string[];
-
+    const creatorIds = Array.from(uniqueCreatorIds);
     const creators =
       creatorIds.length > 0
         ? await this.prisma.user.findMany({
@@ -388,111 +394,111 @@ export class SurveyController extends SurveyControllerBase {
       creatorNameById.set(u.id, fullName || u.username || u.id);
     }
 
-    // Get projectIds from recentSurveys to filter anomalies
-    const projectIds = Array.from(
-      new Set(
-        recentSurveys
-          .map((s: any) => s.projectId)
-          .filter((id: string | null | undefined) => !!id)
-      )
-    ) as string[];
-
-    // Filter recentAnomalies to only include anomalies from projects in recentSurveys
-    // This ensures every anomaly shown has a corresponding survey (or at least a survey from the same project)
-    const recentAnomalies = recentAnomaliesRaw
-      .filter((a: any) => a.projectId && projectIds.includes(a.projectId))
-      .slice(0, 20); // Limit to 20 after filtering
-
-    // Count total anomalies only from projects in recentSurveys
-    // This ensures totalAnomalies matches what's actually shown in recentAnomalies
-    const totalAnomaliesWhere: any = { ...hazardWhere };
-    if (projectIds.length > 0) {
-      totalAnomaliesWhere.projectId = {
-        ...(totalAnomaliesWhere.projectId || {}),
-        in: projectIds,
-      };
-    } else {
-      // If no surveys, no anomalies should be counted
-      totalAnomaliesWhere.projectId = { in: [] };
+    // Handle excluded anomalies - get their projectIds
+    if (excludedAnomalyIds.length > 0) {
+      const excludedHazards = await this.prisma.hazard.findMany({
+        where: { id: { in: excludedAnomalyIds } },
+        select: { projectId: true },
+      });
+      const excludedHazardProjectIds = excludedHazards
+        .map((h) => h.projectId)
+        .filter((id): id is string => id !== null && id !== undefined);
+      excludedProjectIds = [...excludedProjectIds, ...excludedHazardProjectIds];
     }
 
-    const totalAnomalies = await this.prisma.hazard.count({
-      where: totalAnomaliesWhere,
-    });
+    // Filter history entries based on excluded project IDs
+    // Use validHistoryEntries to ensure we only work with entries that have valid survey data
+    let filteredHistory = validHistoryEntries;
+    if (excludedProjectIds.length > 0) {
+      filteredHistory = validHistoryEntries.filter(
+        (h: any) => !h.projectId || !excludedProjectIds.includes(h.projectId)
+      );
+    }
 
-    // Build hazard where clause for counting anomalies per project (same filters as analytics)
-    const anomalyCountWhere: any = {
+    // Calculate total anomalies from denormalized anomaliesCount field
+    const totalAnomalies = filteredHistory.reduce(
+      (sum: number, h: any) => sum + (h.anomaliesCount ?? 0),
+      0
+    );
+
+    // Get projectIds from filtered history for anomaly queries
+    const projectIds = Array.from(
+      new Set(filteredHistory.map((h: any) => h.projectId).filter((id: any): id is string => id !== null))
+    );
+
+    // Get recent surveys from history (limit 20)
+    // Only include entries that have valid survey data to maintain data integrity
+    const recentSurveysWithCreator = filteredHistory
+      .filter((h: any) => h.surveyId && surveyById.has(h.surveyId)) // Only include entries with valid survey
+      .slice(0, 20)
+      .map((h: any) => {
+        const project = h.projectId ? projectById.get(h.projectId) : null;
+        const survey = surveyById.get(h.surveyId);
+        const creatorId = project?.createdBy as string | undefined;
+        const projectId = h.projectId ?? null;
+        return {
+          id: survey?.id ?? null,
+          projectId: projectId,
+          name: survey?.name ?? null,
+          status: survey?.status ?? null,
+          startTime: survey?.startTime ?? null,
+          endTime: survey?.endTime ?? null,
+          eIriAvg: h.eiri,
+          createdBy: creatorId ?? null,
+          createdByName: creatorId ? creatorNameById.get(creatorId) ?? null : null,
+          projectDescription: project?.description ?? null,
+          anomalyCount: h.anomaliesCount ?? 0,
+        };
+      });
+
+    // Get recent anomalies (still need to query hazards for full details)
+    const hazardWhere: any = {
       edgeId,
-      projectId: { in: projectIds },
+      projectId: projectIds.length > 0 ? { in: projectIds } : { in: [] },
     };
 
-    // Apply date filters
-    if (fromDate || toDate) {
-      anomalyCountWhere.createdAt = {};
-      if (fromDate) {
-        anomalyCountWhere.createdAt.gte = fromDate;
-      }
-      if (toDate) {
-        anomalyCountWhere.createdAt.lte = toDate;
-      }
-    }
-
-    // Apply exclusions
     if (excludedAnomalyIds.length > 0) {
-      anomalyCountWhere.id = {
-        notIn: excludedAnomalyIds,
-      };
+      hazardWhere.id = { notIn: excludedAnomalyIds };
     }
 
-    // Exclude anomalies from excluded surveys' projects
     if (excludedProjectIds.length > 0) {
-      anomalyCountWhere.projectId = {
-        ...(anomalyCountWhere.projectId || {}),
+      hazardWhere.projectId = {
+        ...hazardWhere.projectId,
         notIn: excludedProjectIds,
       };
     }
 
-    // Apply entity scoping
+    if (fromDate || toDate) {
+      hazardWhere.createdAt = {};
+      if (fromDate) {
+        hazardWhere.createdAt.gte = fromDate;
+      }
+      if (toDate) {
+        hazardWhere.createdAt.lte = toDate;
+      }
+    }
+
     if (scopedCityHallId) {
-      anomalyCountWhere.project = {
+      hazardWhere.project = {
         cityHallId: scopedCityHallId,
       };
     }
 
-    // Count anomalies grouped by projectId
-    const anomalyCountsByProject = await this.prisma.hazard.groupBy({
-      by: ["projectId"],
-      where: anomalyCountWhere,
-      _count: {
-        id: true,
+    const recentAnomaliesRaw = await this.prisma.hazard.findMany({
+      where: hazardWhere,
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      include: {
+        project: {
+          select: {
+            name: true,
+          },
+        },
       },
     });
 
-    // Create a map of projectId -> anomaly count
-    const anomalyCountByProjectId = new Map<string, number>();
-    for (const result of anomalyCountsByProject) {
-      if (result.projectId) {
-        anomalyCountByProjectId.set(result.projectId, result._count.id);
-      }
-    }
-
-    // Map recentSurveys to include the display name of the user who created the project (survey creator)
-    // the project description, and the anomaly count for that project
-    const recentSurveysWithCreator = recentSurveys.map((survey: any) => {
-      const { project, ...surveyWithoutProject } = survey;
-      const creatorId = project?.createdBy as string | undefined;
-      const projectId = survey.projectId as string | undefined;
-      return {
-        ...surveyWithoutProject,
-        createdBy: creatorId ?? null,
-        createdByName: creatorId ? creatorNameById.get(creatorId) ?? null : null,
-        projectDescription: project?.description ?? null,
-        anomalyCount: projectId ? anomalyCountByProjectId.get(projectId) ?? 0 : 0,
-      };
-    });
-
     // Map recentAnomalies to include projectName and anomalyName
-    const recentAnomaliesWithNames = recentAnomalies.map((anomaly: any, index: number) => {
+    const recentAnomaliesWithNames = recentAnomaliesRaw.map((anomaly: any, index: number) => {
       const { project, ...anomalyWithoutProject } = anomaly;
       return {
         ...anomalyWithoutProject,
@@ -502,13 +508,11 @@ export class SurveyController extends SurveyControllerBase {
       };
     });
 
-    // Calculate daily EIRI data for the last 7 days
-    const dailyEiriData = await this.calculateDailyEiriData(
-      edgeId,
+    // Calculate daily EIRI data using history entries (optimized)
+    const dailyEiriData = this.calculateDailyEiriDataFromHistory(
+      filteredHistory,
       fromDate,
-      toDate,
-      surveyWhere,
-      scopedCityHallId
+      toDate
     );
 
     return {
@@ -518,33 +522,30 @@ export class SurveyController extends SurveyControllerBase {
       totalSurveys,
       totalAnomalies,
       uniqueUsers,
-      averageEiri: avg._avg.eIriAvg ?? null,
+      averageEiri,
       recentSurveys: recentSurveysWithCreator,
       recentAnomalies: recentAnomaliesWithNames,
       dailyEiriData,
     };
   }
 
-  private async calculateDailyEiriData(
-    edgeId: string,
+  // OPTIMIZED: Calculate daily EIRI from history entries instead of querying Survey table
+  private calculateDailyEiriDataFromHistory(
+    historyEntries: any[],
     fromDate: Date | undefined,
-    toDate: Date | undefined,
-    surveyWhere: any,
-    scopedCityHallId: string | null
-  ): Promise<Array<{
+    toDate: Date | undefined
+  ): Array<{
     date: string;
     day: string;
     dayNumber: number;
     month: string;
     value: number | null;
-  }>> {
+  }> {
     // Determine the end date (use toDate if provided, otherwise use today)
     const endDate = toDate ? new Date(toDate) : new Date();
     endDate.setHours(23, 59, 59, 999); // End of day
 
     // Calculate start date (6 days before end date for 7 days total)
-    // If fromDate is provided and it's within 7 days of endDate, use it as the start
-    // Otherwise, use 6 days before endDate
     let startDate = new Date(endDate);
     startDate.setDate(startDate.getDate() - 6);
     startDate.setHours(0, 0, 0, 0); // Start of day
@@ -552,48 +553,23 @@ export class SurveyController extends SurveyControllerBase {
     if (fromDate) {
       const fromDateNormalized = new Date(fromDate);
       fromDateNormalized.setHours(0, 0, 0, 0);
-      // If fromDate is more recent than 6 days ago, use it
-      // Otherwise, keep the 7-day window ending at endDate
       if (fromDateNormalized > startDate) {
         startDate = fromDateNormalized;
       }
     }
 
-    // Build where clause for surveys (respecting exclusions)
-    // Remove date filters from surveyWhere since we're applying our own 7-day window
-    const { startTime, ...surveyWhereWithoutDate } = surveyWhere;
-    const dailySurveyWhere: any = {
-      ...surveyWhereWithoutDate,
-      startTime: {
-        gte: startDate,
-        lte: endDate,
-      },
-      eIriAvg: { not: null }, // Only include surveys with EIRI data
-    };
-
-    // Fetch surveys for the date range
-    const surveys = await this.prisma.survey.findMany({
-      where: dailySurveyWhere,
-      select: {
-        startTime: true,
-        eIriAvg: true,
-      },
-      orderBy: { startTime: "asc" },
-    });
-
-    // Group surveys by date (YYYY-MM-DD)
-    const surveysByDate = new Map<string, number[]>();
-    for (const survey of surveys) {
-      if (!survey.startTime || survey.eIriAvg === null || survey.eIriAvg === undefined) {
-        continue;
-      }
-      const date = new Date(survey.startTime);
-      const dateKey = date.toISOString().split("T")[0]; // YYYY-MM-DD
+    // Group history entries by date (YYYY-MM-DD)
+    const eiriByDate = new Map<string, number[]>();
+    for (const h of historyEntries) {
+      if (!h.createdAt) continue;
+      const date = new Date(h.createdAt);
+      if (date < startDate || date > endDate) continue;
       
-      if (!surveysByDate.has(dateKey)) {
-        surveysByDate.set(dateKey, []);
+      const dateKey = date.toISOString().split("T")[0];
+      if (!eiriByDate.has(dateKey)) {
+        eiriByDate.set(dateKey, []);
       }
-      surveysByDate.get(dateKey)!.push(survey.eIriAvg);
+      eiriByDate.get(dateKey)!.push(h.eiri);
     }
 
     // Generate array for last 7 days
@@ -617,12 +593,12 @@ export class SurveyController extends SurveyControllerBase {
       const dayNumber = currentDate.getDate();
       const monthIndex = currentDate.getMonth();
 
-      // Calculate average EIRI for this day if surveys exist
+      // Calculate average EIRI for this day if history entries exist
       let value: number | null = null;
-      const daySurveys = surveysByDate.get(dateKey);
-      if (daySurveys && daySurveys.length > 0) {
-        const sum = daySurveys.reduce((a, b) => a + b, 0);
-        value = Math.round((sum / daySurveys.length) * 100) / 100; // Round to 2 decimal places
+      const dayEiris = eiriByDate.get(dateKey);
+      if (dayEiris && dayEiris.length > 0) {
+        const sum = dayEiris.reduce((a: number, b: number) => a + b, 0);
+        value = Math.round((sum / dayEiris.length) * 100) / 100; // Round to 2 decimal places
       }
 
       dailyData.push({

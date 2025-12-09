@@ -387,7 +387,8 @@ export class MobileService {
       select: { id: true },
     });
 
-    // Create hazards for anomalies
+    // Create hazards for anomalies and count them per edgeId
+    const anomaliesCountByEdgeId = new Map<string, number>();
     if (Array.isArray(anomalies)) {
       for (const a of anomalies) {
         const lat = Number(a?.lat);
@@ -399,6 +400,14 @@ export class MobileService {
             (a as any)?.roadId ??
             (a as any)?.road_id ??
             null;
+          
+          if (anomalyEdgeId) {
+            anomaliesCountByEdgeId.set(
+              anomalyEdgeId,
+              (anomaliesCountByEdgeId.get(anomalyEdgeId) || 0) + 1
+            );
+          }
+          
           await this.prisma.hazard.create({
             data: {
               project: { connect: { id: projectId } },
@@ -449,13 +458,19 @@ export class MobileService {
       // Calculate average eIri for this roadId in this survey
       const avgEiri = eIriValues.reduce((a, b) => a + b, 0) / eIriValues.length;
       
-      // Save to history (one entry per survey, using average)
+      // Get anomalies count for this edgeId (0 if none)
+      const anomaliesCount = anomaliesCountByEdgeId.get(roadId) || 0;
+      
+      // Save to history (one entry per survey, using average) with denormalized fields
       await this.prisma.roadRatingHistory.create({
         data: {
           entityId,
           roadId,
           eiri: avgEiri,
           userId: user.id,
+          surveyId: survey.id,
+          projectId: projectId,
+          anomaliesCount: anomaliesCount > 0 ? anomaliesCount : null,
         },
       });
 

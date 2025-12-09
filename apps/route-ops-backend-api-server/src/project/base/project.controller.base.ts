@@ -118,10 +118,12 @@ export class ProjectControllerBase {
     const authUser = (request as any).user as { id: string; roles: string[] };
     const scopedWhere = await applyEntityScope(this.prisma, authUser, argsWithFilters.where as any);
 
-    // Filter to only return pending projects (exclude active and ended/completed)
+    // Exclude projects with active status
     const finalWhere = {
       ...scopedWhere,
-      // status: EnumProjectStatus.PENDING,
+      status: {
+        not: EnumProjectStatus.ACTIVE,
+      },
     };
 
     const projects = await this.service.projects({

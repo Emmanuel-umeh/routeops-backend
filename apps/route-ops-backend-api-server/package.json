@@ -10,6 +10,7 @@
     "test": "jest",
     "seed": "ts-node scripts/seed.ts",
     "create-admin": "ts-node scripts/createAdmin.ts",
+    "setup:production": "ts-node scripts/setupProduction.ts",
     "add-hazards": "ts-node scripts/addHazardsToExistingProjects.ts",
     "test-hazard-remarks": "ts-node scripts/testHazardRemarks.ts",
     "test-single-hazard": "ts-node scripts/testSingleHazardWithRemarks.ts",

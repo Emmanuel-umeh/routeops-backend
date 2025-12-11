@@ -88,6 +88,18 @@ export class ProjectControllerBase {
         status: true,
         updatedAt: true,
         videoUrl: true,
+        videoMetadata: {
+          select: {
+            id: true,
+            videoTime: true,
+            lat: true,
+            lng: true,
+            createdAt: true,
+          },
+          orderBy: {
+            videoTime: "asc",
+          },
+        },
       },
     });
   }
@@ -153,6 +165,18 @@ export class ProjectControllerBase {
         status: true,
         updatedAt: true,
         videoUrl: true,
+        videoMetadata: {
+          select: {
+            id: true,
+            videoTime: true,
+            lat: true,
+            lng: true,
+            createdAt: true,
+          },
+          orderBy: {
+            videoTime: "asc",
+          },
+        },
         surveys: {
           select: {
             id: true,
@@ -433,6 +457,18 @@ export class ProjectControllerBase {
           startDate: true,
           updatedAt: true,
           videoUrl: true,
+          videoMetadata: {
+            select: {
+              id: true,
+              videoTime: true,
+              lat: true,
+              lng: true,
+              createdAt: true,
+            },
+            orderBy: {
+              videoTime: "asc",
+            },
+          },
         },
       });
     } catch (error) {
@@ -482,6 +518,18 @@ export class ProjectControllerBase {
           status: true,
           updatedAt: true,
           videoUrl: true,
+          videoMetadata: {
+            select: {
+              id: true,
+              videoTime: true,
+              lat: true,
+              lng: true,
+              createdAt: true,
+            },
+            orderBy: {
+              videoTime: "asc",
+            },
+          },
         },
       });
     } catch (error) {

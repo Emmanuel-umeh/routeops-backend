@@ -39,22 +39,24 @@ model RoutePoint {
 }
 
 model Project {
-  assignedUser  String?
-  cityHall      CityHall?          @relation(fields: [cityHallId], references: [id])
-  cityHallId    String?
-  createdAt     DateTime           @default(now())
-  createdBy     String?
-  description   String?
-  hazards       Hazard[]
-  id            String             @id @default(uuid())
-  name          String?
-  routePoints   RoutePoint[]
-  scheduledDate DateTime?
-  startDate     DateTime?
-  status        EnumProjectStatus?
-  surveys       Survey[]
-  updatedAt     DateTime           @updatedAt
-  videoUrl      String?
+  assignedUser        String?
+  cityHall            CityHall?            @relation(fields: [cityHallId], references: [id])
+  cityHallId          String?
+  createdAt           DateTime             @default(now())
+  createdBy           String?
+  description         String?
+  hazards             Hazard[]
+  id                  String               @id @default(uuid())
+  name                String?
+  routePoints         RoutePoint[]
+  scheduledDate       DateTime?
+  startDate           DateTime?
+  status              EnumProjectStatus?
+  surveys             Survey[]
+  roadRatingHistory   RoadRatingHistory[]
+  updatedAt           DateTime             @updatedAt
+  videoUrl            String?
+  videoMetadata       VideoMetadata[]
 }
 
 model Remark {
@@ -97,17 +99,18 @@ model Hazard {
 }
 
 model Survey {
-  assignedUser String?
-  createdAt    DateTime  @default(now())
-  endTime      DateTime?
-  id           String    @id @default(uuid())
-  name         String?
-  project      Project?  @relation(fields: [projectId], references: [id])
-  projectId    String?
-  remarks      Remark[]
-  remarksText  String?
-  startTime    DateTime?
-  status       String?
+  assignedUser         String?
+  createdAt           DateTime            @default(now())
+  endTime             DateTime?
+  id                  String              @id @default(uuid())
+  name                String?
+  project             Project?            @relation(fields: [projectId], references: [id])
+  projectId           String?
+  remarks             Remark[]
+  remarksText         String?
+  startTime           DateTime?
+  status              String?
+  roadRatingHistory   RoadRatingHistory[]
   // Geometry for Google Maps (GeoJSON LineString/MultiLineString)
   // Each point in the geometry can have an edgeId in its properties
   geometryJson Json?
@@ -168,19 +171,27 @@ enum EnumVehicleType {
 }
 
 model RoadRatingHistory {
-  id        String   @id @default(uuid())
-  entityId  String // CityHall.id
-  roadId    String // edgeId
-  eiri      Float // EIRI rating
-  userId    String // User.id who made the survey
-  createdAt DateTime @default(now())
+  id             String   @id @default(uuid())
+  entityId      String   // CityHall.id
+  roadId         String   // edgeId
+  eiri           Float    // EIRI rating
+  userId         String   // User.id who made the survey
+  surveyId       String?  // Survey.id (denormalized for analytics)
+  projectId      String?  // Project.id (denormalized for analytics)
+  anomaliesCount Int?     // Pre-calculated anomalies count for this survey+edge
+  createdAt      DateTime @default(now())
 
   entity CityHall @relation(fields: [entityId], references: [id])
   user   User     @relation(fields: [userId], references: [id])
+  survey Survey?  @relation(fields: [surveyId], references: [id])
+  project Project? @relation(fields: [projectId], references: [id])
 
   @@index([entityId, roadId])
   @@index([userId])
   @@index([createdAt])
+  @@index([surveyId])
+  @@index([projectId])
+  @@index([roadId, createdAt]) // For time-filtered queries
 }
 
 model RoadRating {
@@ -195,4 +206,17 @@ model RoadRating {
   @@unique([entityId, roadId])
   @@index([entityId])
   @@index([roadId])
+}
+
+model VideoMetadata {
+  id        String   @id @default(uuid())
+  project   Project  @relation(fields: [projectId], references: [id])
+  projectId String
+  videoTime Int      // Time in seconds within the video
+  lat       Float    // Latitude at this video time
+  lng       Float    // Longitude at this video time
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+  @@index([projectId, videoTime]) // For efficient queries by project and time
 }

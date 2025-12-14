@@ -237,7 +237,7 @@ export class MobileService {
     return { projectId };
   }
   async endProject(body: any, user: UserInfo) {
-    const { projectId, numAttachments, geometry, anomalies, startDate, endDate } = body ?? {};
+    const { projectId, numAttachments, geometry, anomalies, startDate, endDate, videoUrl, videoMetadata } = body ?? {};
 
     if (!projectId) {
       throw new Error("projectId is required");
@@ -387,7 +387,8 @@ export class MobileService {
       select: { id: true },
     });
 
-    // Create hazards for anomalies
+    // Create hazards for anomalies and count them per edgeId
+    const anomaliesCountByEdgeId = new Map<string, number>();
     if (Array.isArray(anomalies)) {
       for (const a of anomalies) {
         const lat = Number(a?.lat);
@@ -399,6 +400,14 @@ export class MobileService {
             (a as any)?.roadId ??
             (a as any)?.road_id ??
             null;
+          
+          if (anomalyEdgeId) {
+            anomaliesCountByEdgeId.set(
+              anomalyEdgeId,
+              (anomaliesCountByEdgeId.get(anomalyEdgeId) || 0) + 1
+            );
+          }
+          
           await this.prisma.hazard.create({
             data: {
               project: { connect: { id: projectId } },
@@ -449,13 +458,19 @@ export class MobileService {
       // Calculate average eIri for this roadId in this survey
       const avgEiri = eIriValues.reduce((a, b) => a + b, 0) / eIriValues.length;
       
-      // Save to history (one entry per survey, using average)
+      // Get anomalies count for this edgeId (0 if none)
+      const anomaliesCount = anomaliesCountByEdgeId.get(roadId) || 0;
+      
+      // Save to history (one entry per survey, using average) with denormalized fields
       await this.prisma.roadRatingHistory.create({
         data: {
           entityId,
           roadId,
           eiri: avgEiri,
           userId: user.id,
+          surveyId: survey.id,
+          projectId: projectId,
+          anomaliesCount: anomaliesCount > 0 ? anomaliesCount : null,
         },
       });
 
@@ -493,14 +508,36 @@ export class MobileService {
       });
     }
 
-    // Update project status to completed
-    await this.prisma.project.update({ where: { id: projectId }, data: { status: "completed" } });
+    // Update project status to completed and save video URL if provided
+    const projectUpdateData: any = { status: "completed" };
+    if (videoUrl) {
+      projectUpdateData.videoUrl = videoUrl;
+    }
+    await this.prisma.project.update({ where: { id: projectId }, data: projectUpdateData });
+
+    // Save video metadata if provided
+    if (videoUrl && Array.isArray(videoMetadata) && videoMetadata.length > 0) {
+      // Delete existing video metadata for this project to allow updates
+      await this.prisma.videoMetadata.deleteMany({
+        where: { projectId },
+      });
+
+      // Create new video metadata entries
+      await this.prisma.videoMetadata.createMany({
+        data: videoMetadata.map((meta: any) => ({
+          projectId,
+          videoTime: meta.videoTime,
+          lat: meta.lat,
+          lng: meta.lng,
+        })),
+      });
+    }
 
     return { success: true, surveyId: survey.id };
   }
 
   async uploadAttachments(body: any) {
-    const { projectId, type, files } = body ?? {};
+    const { projectId, type, files, videoMetadata } = body ?? {};
     const uploaded = Array.isArray(files) ? files.length : 0;
 
     // If type is video, save the first video URL to the project
@@ -509,6 +546,24 @@ export class MobileService {
         where: { id: projectId },
         data: { videoUrl: files[0] },
       });
+
+      // Save video metadata if provided
+      if (Array.isArray(videoMetadata) && videoMetadata.length > 0) {
+        // Delete existing video metadata for this project to allow updates
+        await this.prisma.videoMetadata.deleteMany({
+          where: { projectId },
+        });
+
+        // Create new video metadata entries
+        await this.prisma.videoMetadata.createMany({
+          data: videoMetadata.map((meta: any) => ({
+            projectId,
+            videoTime: meta.videoTime,
+            lat: meta.lat,
+            lng: meta.lng,
+          })),
+        });
+      }
     }
 
     return { uploaded, remaining: 0, complete: true, projectId, type };

@@ -237,7 +237,7 @@ export class MobileService {
     return { projectId };
   }
   async endProject(body: any, user: UserInfo) {
-    const { projectId, numAttachments, geometry, anomalies, startDate, endDate } = body ?? {};
+    const { projectId, numAttachments, geometry, anomalies, startDate, endDate, videoUrl, videoMetadata } = body ?? {};
 
     if (!projectId) {
       throw new Error("projectId is required");
@@ -508,8 +508,30 @@ export class MobileService {
       });
     }
 
-    // Update project status to completed
-    await this.prisma.project.update({ where: { id: projectId }, data: { status: "completed" } });
+    // Update project status to completed and save video URL if provided
+    const projectUpdateData: any = { status: "completed" };
+    if (videoUrl) {
+      projectUpdateData.videoUrl = videoUrl;
+    }
+    await this.prisma.project.update({ where: { id: projectId }, data: projectUpdateData });
+
+    // Save video metadata if provided
+    if (videoUrl && Array.isArray(videoMetadata) && videoMetadata.length > 0) {
+      // Delete existing video metadata for this project to allow updates
+      await this.prisma.videoMetadata.deleteMany({
+        where: { projectId },
+      });
+
+      // Create new video metadata entries
+      await this.prisma.videoMetadata.createMany({
+        data: videoMetadata.map((meta: any) => ({
+          projectId,
+          videoTime: meta.videoTime,
+          lat: meta.lat,
+          lng: meta.lng,
+        })),
+      });
+    }
 
     return { success: true, surveyId: survey.id };
   }

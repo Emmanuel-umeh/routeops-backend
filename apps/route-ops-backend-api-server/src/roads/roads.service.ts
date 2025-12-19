@@ -42,6 +42,10 @@ export interface NearestEdgeResponse {
 export class RoadsService {
   private readonly logger = new Logger(RoadsService.name);
   private gpkgCache: Map<string, { gpkg: any; featureDao: any; featureIndexManager: any; tableName: string }> = new Map();
+  // Cache for nearest edge queries (key: "lat_lng_radius", value: NearestEdgeResult)
+  private nearestEdgeCache: Map<string, NearestEdgeResult | null> = new Map();
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  private cacheTimestamps: Map<string, number> = new Map();
 
   // From your attribute list: fid, full_id, osm_id, osm_type, highway, name, ...
   // We'll treat osm_id as our stable edgeId, and name as the human-readable road name.
@@ -136,6 +140,17 @@ export class RoadsService {
     lng: number,
     radiusMeters: number
   ): Promise<NearestEdgeResult | null> {
+    // Check cache first (round coordinates to ~10m precision for cache key)
+    const cacheKey = `${Math.round(lat * 10000) / 10000}_${Math.round(lng * 10000) / 10000}_${radiusMeters}`;
+    const cachedTimestamp = this.cacheTimestamps.get(cacheKey);
+    if (cachedTimestamp && Date.now() - cachedTimestamp < this.CACHE_TTL_MS) {
+      const cached = this.nearestEdgeCache.get(cacheKey);
+      if (cached !== undefined) {
+        this.logger.log(`Cache hit for nearest edge query: ${cacheKey}`);
+        return cached;
+      }
+    }
+
     // Get all .gpkg files in map-files directory
     const gpkgFiles = await this.getGeoPackageFiles();
 
@@ -561,12 +576,45 @@ export class RoadsService {
       this.logger.log(`First feature has _extractedGeometry: ${!!firstFeature._extractedGeometry}, type: ${firstFeature._extractedGeometry?.type}`);
     }
 
+    // Limit features to process (performance optimization)
+    const MAX_FEATURES_TO_PROCESS = 200;
+    const featuresToProcess = features.slice(0, MAX_FEATURES_TO_PROCESS);
+    if (features.length > MAX_FEATURES_TO_PROCESS) {
+      this.logger.log(`Limiting feature processing to ${MAX_FEATURES_TO_PROCESS} of ${features.length} features`);
+    }
+
+    // Sort features by approximate distance (using bbox center) before exact calculation
+    // clickPoint is already defined earlier in the function
+    featuresToProcess.sort((a: any, b: any) => {
+      const geomA = (a as any)._extractedGeometry;
+      const geomB = (b as any)._extractedGeometry;
+      if (!geomA || !geomB) return 0;
+      
+      // Calculate approximate distance using bbox center
+      const getBboxCenter = (geom: any) => {
+        if (geom.type === "LineString" && geom.coordinates?.length > 0) {
+          const midIdx = Math.floor(geom.coordinates.length / 2);
+          return turf.point(geom.coordinates[midIdx]);
+        }
+        return null;
+      };
+      
+      const centerA = getBboxCenter(geomA);
+      const centerB = getBboxCenter(geomB);
+      if (!centerA || !centerB) return 0;
+      
+      const distA = turf.distance(clickPoint, centerA, { units: "meters" });
+      const distB = turf.distance(clickPoint, centerB, { units: "meters" });
+      return distA - distB;
+    });
+
     let bestFeature: any = null;
     let bestDistance = Infinity;
     let processedCount = 0;
     let distanceCalculationFailures = 0;
+    const EARLY_EXIT_DISTANCE = 5; // Exit early if we find a match within 5 meters
 
-    for (const row of features) {
+    for (const row of featuresToProcess) {
       // Features should have geometry extracted and stored in _extractedGeometry during filtering
       let geom: any = (row as any)._extractedGeometry;
       let feature: any = row;
@@ -641,6 +689,12 @@ export class RoadsService {
         // Ensure the best feature has the extracted geometry (should already be set, but just in case)
         if (!(bestFeature as any)._extractedGeometry && geom) {
           (bestFeature as any)._extractedGeometry = geom;
+        }
+        
+        // Early exit if we found a very close match (performance optimization)
+        if (bestDistance < EARLY_EXIT_DISTANCE) {
+          this.logger.log(`Early exit: found very close match at ${bestDistance}m`);
+          break;
         }
       }
     }
@@ -752,7 +806,7 @@ export class RoadsService {
 
     // Return both formats: original format for backward compatibility
     // and GeoJSON Feature for direct Google Maps consumption
-    return {
+    const result: NearestEdgeResult = {
       edgeId: edgeId ?? null,
       distanceMeters:
         typeof bestDistance === "number" && !isNaN(bestDistance) ? bestDistance : null,
@@ -760,6 +814,23 @@ export class RoadsService {
       projectId: null,
       geometry: finalGeometry, // LineString GeoJSON for map display
     };
+
+    // Cache the result
+    this.nearestEdgeCache.set(cacheKey, result);
+    this.cacheTimestamps.set(cacheKey, Date.now());
+    
+    // Clean up old cache entries (keep cache size reasonable)
+    if (this.nearestEdgeCache.size > 1000) {
+      const now = Date.now();
+      for (const [key, timestamp] of this.cacheTimestamps.entries()) {
+        if (now - timestamp > this.CACHE_TTL_MS) {
+          this.nearestEdgeCache.delete(key);
+          this.cacheTimestamps.delete(key);
+        }
+      }
+    }
+
+    return result;
   }
 
   /**

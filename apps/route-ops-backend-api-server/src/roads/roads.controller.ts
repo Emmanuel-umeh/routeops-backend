@@ -1,4 +1,5 @@
-import { Controller, Get, Query, Post, Body, BadRequestException, UseGuards, Req } from "@nestjs/common";
+import { Controller, Get, Query, Post, Body, BadRequestException, UseGuards, Req, Param, Res } from "@nestjs/common";
+import { Response } from "express";
 import * as swagger from "@nestjs/swagger";
 import { RoadsService, NearestEdgeResponse } from "./roads.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -26,9 +27,9 @@ export class RoadsController {
 
   @Get("nearest-edge")
   @swagger.ApiOperation({
-    summary: "Find nearest road edge in GeoPackage to a click location",
+    summary: "Find nearest road edge to a click location (uses PostGIS if available, falls back to GPKG)",
     description:
-      "Given a lat/lng and optional radius (meters), returns the nearest road edge (if any) from the GeoPackage.",
+      "Given a lat/lng and optional radius (meters), returns the nearest road edge (if any). Uses PostGIS for faster queries.",
   })
   @swagger.ApiQuery({
     name: "lat",
@@ -99,7 +100,8 @@ export class RoadsController {
   async getNearestEdge(
     @Query("lat") latRaw: string,
     @Query("lng") lngRaw: string,
-    @Query("radiusMeters") radiusRaw?: string
+    @Query("radiusMeters") radiusRaw?: string,
+    @UserData() userInfo?: UserInfo
   ): Promise<NearestEdgeResponse> {
     const lat = parseFloat(latRaw);
     const lng = parseFloat(lngRaw);
@@ -112,7 +114,19 @@ export class RoadsController {
       throw new BadRequestException("Query parameters 'lat' and 'lng' are required and must be numbers.");
     }
 
-    const result = await this.roadsService.findNearestEdge(lat, lng, radius);
+    // Get user's city hall ID if available
+    let cityHallId: string | null = null;
+    if (userInfo?.id) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userInfo.id },
+        select: { cityHallId: true },
+      });
+      cityHallId = user?.cityHallId ?? null;
+    }
+
+    // Try PostGIS first, fallback to GPKG
+    const result = await this.roadsService.findNearestEdgePostgis(lat, lng, radius, cityHallId) ||
+                   await this.roadsService.findNearestEdge(lat, lng, radius);
 
     if (!result || !result.edgeId) {
       return {
@@ -652,8 +666,19 @@ export class RoadsController {
       throw new BadRequestException("Query parameters 'lat' and 'lng' are required and must be numbers.");
     }
 
-    // Step 1: Find nearest edge
-    const nearestEdgeResult = await this.roadsService.findNearestEdge(lat, lng, radius);
+    // Get user's city hall ID if available
+    let cityHallId: string | null = null;
+    if (userInfo?.id) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userInfo.id },
+        select: { cityHallId: true },
+      });
+      cityHallId = user?.cityHallId ?? null;
+    }
+
+    // Step 1: Find nearest edge (try PostGIS first, fallback to GPKG)
+    const nearestEdgeResult = await this.roadsService.findNearestEdgePostgis(lat, lng, radius, cityHallId) ||
+                               await this.roadsService.findNearestEdge(lat, lng, radius);
     
     let nearestEdgeResponse: NearestEdgeResponse | null = null;
     if (nearestEdgeResult && nearestEdgeResult.edgeId) {
@@ -680,6 +705,56 @@ export class RoadsController {
       nearestEdge: nearestEdgeResponse,
       analytics,
     };
+  }
+
+  @Get("tiles/roads/:z/:x/:y.pbf")
+  @UseGuards(DefaultAuthGuard)
+  @swagger.ApiOperation({
+    summary: "Get vector tile (MVT) for roads",
+    description: "Returns Mapbox Vector Tile (MVT) format for roads. Filtered by user's city hall if not admin.",
+  })
+  @swagger.ApiParam({ name: "z", type: Number, description: "Zoom level" })
+  @swagger.ApiParam({ name: "x", type: Number, description: "Tile X coordinate" })
+  @swagger.ApiParam({ name: "y", type: Number, description: "Tile Y coordinate" })
+  async getRoadTile(
+    @Param("z") zRaw: string,
+    @Param("x") xRaw: string,
+    @Param("y") yRaw: string,
+    @UserData() userInfo?: UserInfo,
+    @Res() res?: Response
+  ) {
+    const z = parseInt(zRaw, 10);
+    const x = parseInt(xRaw, 10);
+    const y = parseInt(yRaw, 10);
+
+    if (Number.isNaN(z) || Number.isNaN(x) || Number.isNaN(y)) {
+      throw new BadRequestException("Invalid tile coordinates");
+    }
+
+    // Get user's city hall ID if available (non-admins only see their city hall)
+    let cityHallId: string | null = null;
+    if (userInfo?.id && !userInfo.roles?.includes("admin")) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userInfo.id },
+        select: { cityHallId: true },
+      });
+      cityHallId = user?.cityHallId ?? null;
+    }
+
+    const tile = await this.roadsService.getVectorTile(z, x, y, cityHallId);
+
+    if (!tile || !res) {
+      // Return empty tile (204 No Content)
+      if (res) {
+        return res.status(204).send();
+      }
+      return null;
+    }
+
+    // Return MVT binary
+    res.setHeader("Content-Type", "application/x-protobuf");
+    res.setHeader("Cache-Control", "public, max-age=3600"); // Cache for 1 hour
+    return res.send(tile);
   }
 
   /**

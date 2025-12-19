@@ -1,7 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { Type } from "class-transformer";
 import { IsArray, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, IsUUID, Min, ValidateNested, IsNumber } from "class-validator";
-import { VideoMetadataItemDto } from "./UploadAttachmentsDto";
 
 export class NumAttachmentsDto {
   @ApiProperty({
@@ -233,31 +232,6 @@ export class EndProjectDto {
   @IsOptional()
   @IsString()
   endDate?: string;
-
-  @ApiProperty({
-    description: "Video URL for the project (if video was recorded)",
-    example: "https://storage.../video.mp4",
-    required: false,
-  })
-  @IsOptional()
-  @IsString()
-  videoUrl?: string;
-
-  @ApiProperty({
-    description: "Array of video metadata entries for synchronized map markers (only used when videoUrl is provided)",
-    type: [VideoMetadataItemDto],
-    required: false,
-    example: [
-      { videoTime: 10, lat: 37.060899, lng: -8.064873 },
-      { videoTime: 20, lat: 37.061000, lng: -8.064900 },
-      { videoTime: 30, lat: 37.061100, lng: -8.064950 },
-    ],
-  })
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => VideoMetadataItemDto)
-  videoMetadata?: VideoMetadataItemDto[];
 }
 
 

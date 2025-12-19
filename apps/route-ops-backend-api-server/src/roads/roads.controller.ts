@@ -1,4 +1,5 @@
-import { Controller, Get, Query, Post, Body, BadRequestException, UseGuards } from "@nestjs/common";
+import { Controller, Get, Query, Post, Body, BadRequestException, UseGuards, Req, Param, Res } from "@nestjs/common";
+import { Response } from "express";
 import * as swagger from "@nestjs/swagger";
 import { RoadsService, NearestEdgeResponse } from "./roads.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -14,6 +15,7 @@ import {
 } from "../util/filter.util";
 import { EnumProjectStatus } from "../project/base/EnumProjectStatus";
 import * as turf from "@turf/turf";
+import { Request } from "express";
 
 @swagger.ApiTags("roads")
 @Controller("roads")
@@ -25,9 +27,9 @@ export class RoadsController {
 
   @Get("nearest-edge")
   @swagger.ApiOperation({
-    summary: "Find nearest road edge in GeoPackage to a click location",
+    summary: "Find nearest road edge to a click location (uses PostGIS if available, falls back to GPKG)",
     description:
-      "Given a lat/lng and optional radius (meters), returns the nearest road edge (if any) from the GeoPackage.",
+      "Given a lat/lng and optional radius (meters), returns the nearest road edge (if any). Uses PostGIS for faster queries.",
   })
   @swagger.ApiQuery({
     name: "lat",
@@ -98,7 +100,8 @@ export class RoadsController {
   async getNearestEdge(
     @Query("lat") latRaw: string,
     @Query("lng") lngRaw: string,
-    @Query("radiusMeters") radiusRaw?: string
+    @Query("radiusMeters") radiusRaw?: string,
+    @UserData() userInfo?: UserInfo
   ): Promise<NearestEdgeResponse> {
     const lat = parseFloat(latRaw);
     const lng = parseFloat(lngRaw);
@@ -111,7 +114,19 @@ export class RoadsController {
       throw new BadRequestException("Query parameters 'lat' and 'lng' are required and must be numbers.");
     }
 
-    const result = await this.roadsService.findNearestEdge(lat, lng, radius);
+    // Get user's city hall ID if available
+    let cityHallId: string | null = null;
+    if (userInfo?.id) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userInfo.id },
+        select: { cityHallId: true },
+      });
+      cityHallId = user?.cityHallId ?? null;
+    }
+
+    // Try PostGIS first, fallback to GPKG
+    const result = await this.roadsService.findNearestEdgePostgis(lat, lng, radius, cityHallId) ||
+                   await this.roadsService.findNearestEdge(lat, lng, radius);
 
     if (!result || !result.edgeId) {
       return {
@@ -566,6 +581,542 @@ export class RoadsController {
     console.log(`[RoadsController] Returning ${results.length} roads (${bboxFilteredCount} filtered out by bbox)`);
 
     return results;
+  }
+
+  @Get("map-click-data")
+  @UseGuards(DefaultAuthGuard)
+  @swagger.ApiOperation({
+    summary: "Get combined map click data (nearest edge + analytics) in one call",
+    description:
+      "Combines nearest-edge and edge-analytics endpoints into a single call for better performance. Returns nearest edge data and analytics if edge is found.",
+  })
+  @swagger.ApiQuery({
+    name: "lat",
+    required: true,
+    type: Number,
+    description: "Latitude in WGS84",
+    example: 37.2472509168706,
+  })
+  @swagger.ApiQuery({
+    name: "lng",
+    required: true,
+    type: Number,
+    description: "Longitude in WGS84",
+    example: 42.43722332467271,
+  })
+  @swagger.ApiQuery({
+    name: "radiusMeters",
+    required: false,
+    type: Number,
+    description: "Search radius in meters (default 200)",
+    example: 200,
+  })
+  @swagger.ApiQuery({
+    name: "from",
+    required: false,
+    type: String,
+    description: "Start date for analytics (ISO string)",
+    example: "2025-12-09T23:49:48.376Z",
+  })
+  @swagger.ApiQuery({
+    name: "to",
+    required: false,
+    type: String,
+    description: "End date for analytics (ISO string)",
+    example: "2025-12-15T23:49:48.376Z",
+  })
+  @swagger.ApiOkResponse({
+    description: "Combined response with nearest edge and analytics",
+    schema: {
+      type: "object",
+      properties: {
+        nearestEdge: {
+          type: "object",
+          nullable: true,
+          properties: {
+            edgeId: { type: "string", nullable: true },
+            json: { type: "object", nullable: true },
+          },
+        },
+        analytics: {
+          type: "object",
+          nullable: true,
+          description: "Edge analytics (only present if edgeId was found)",
+        },
+      },
+    },
+  })
+  async getMapClickData(
+    @Query("lat") latRaw: string,
+    @Query("lng") lngRaw: string,
+    @Query("radiusMeters") radiusRaw?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @UserData() userInfo?: UserInfo,
+    @Req() req?: Request
+  ) {
+    const lat = parseFloat(latRaw);
+    const lng = parseFloat(lngRaw);
+    const radius =
+      typeof radiusRaw === "string" && radiusRaw.length > 0
+        ? parseFloat(radiusRaw)
+        : 200;
+
+    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+      throw new BadRequestException("Query parameters 'lat' and 'lng' are required and must be numbers.");
+    }
+
+    // Get user's city hall ID if available
+    let cityHallId: string | null = null;
+    if (userInfo?.id) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userInfo.id },
+        select: { cityHallId: true },
+      });
+      cityHallId = user?.cityHallId ?? null;
+    }
+
+    // Step 1: Find nearest edge (try PostGIS first, fallback to GPKG)
+    const nearestEdgeResult = await this.roadsService.findNearestEdgePostgis(lat, lng, radius, cityHallId) ||
+                               await this.roadsService.findNearestEdge(lat, lng, radius);
+    
+    let nearestEdgeResponse: NearestEdgeResponse | null = null;
+    if (nearestEdgeResult && nearestEdgeResult.edgeId) {
+      const geoJsonFeature = this.roadsService.toGeoJsonFeature(nearestEdgeResult);
+      nearestEdgeResponse = {
+        edgeId: nearestEdgeResult.edgeId,
+        json: geoJsonFeature,
+      };
+    }
+
+    // Step 2: If edge found, get analytics
+    let analytics: any = null;
+    if (nearestEdgeResult?.edgeId) {
+      analytics = await this.getEdgeAnalytics(
+        nearestEdgeResult.edgeId,
+        from,
+        to,
+        userInfo,
+        req
+      );
+    }
+
+    return {
+      nearestEdge: nearestEdgeResponse,
+      analytics,
+    };
+  }
+
+  @Get("tiles/roads/:z/:x/:y.pbf")
+  @UseGuards(DefaultAuthGuard)
+  @swagger.ApiOperation({
+    summary: "Get vector tile (MVT) for roads",
+    description: "Returns Mapbox Vector Tile (MVT) format for roads. Filtered by user's city hall if not admin.",
+  })
+  @swagger.ApiParam({ name: "z", type: Number, description: "Zoom level" })
+  @swagger.ApiParam({ name: "x", type: Number, description: "Tile X coordinate" })
+  @swagger.ApiParam({ name: "y", type: Number, description: "Tile Y coordinate" })
+  async getRoadTile(
+    @Param("z") zRaw: string,
+    @Param("x") xRaw: string,
+    @Param("y") yRaw: string,
+    @UserData() userInfo?: UserInfo,
+    @Res() res?: Response
+  ) {
+    const z = parseInt(zRaw, 10);
+    const x = parseInt(xRaw, 10);
+    const y = parseInt(yRaw, 10);
+
+    if (Number.isNaN(z) || Number.isNaN(x) || Number.isNaN(y)) {
+      throw new BadRequestException("Invalid tile coordinates");
+    }
+
+    // Get user's city hall ID if available (non-admins only see their city hall)
+    let cityHallId: string | null = null;
+    if (userInfo?.id && !userInfo.roles?.includes("admin")) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userInfo.id },
+        select: { cityHallId: true },
+      });
+      cityHallId = user?.cityHallId ?? null;
+    }
+
+    const tile = await this.roadsService.getVectorTile(z, x, y, cityHallId);
+
+    if (!tile || !res) {
+      // Return empty tile (204 No Content)
+      if (res) {
+        return res.status(204).send();
+      }
+      return null;
+    }
+
+    // Return MVT binary
+    res.setHeader("Content-Type", "application/x-protobuf");
+    res.setHeader("Cache-Control", "public, max-age=3600"); // Cache for 1 hour
+    return res.send(tile);
+  }
+
+  /**
+   * Helper method to get edge analytics (extracted from survey controller logic)
+   * This allows us to reuse the analytics logic without duplicating code
+   */
+  private async getEdgeAnalytics(
+    edgeId: string,
+    from?: string,
+    to?: string,
+    userInfo?: UserInfo,
+    req?: Request
+  ): Promise<any> {
+    const fromDate = from ? new Date(from) : undefined;
+    const toDate = to ? new Date(to) : undefined;
+    if ((from && Number.isNaN(fromDate!.getTime())) || (to && Number.isNaN(toDate!.getTime()))) {
+      throw new BadRequestException("Invalid from/to date");
+    }
+
+    const authUser = userInfo ? { id: userInfo.id, roles: userInfo.roles } : undefined;
+
+    // Base filters
+    const surveyWhereBase: any = {
+      edgeIds: { has: edgeId },
+    };
+    const hazardWhereBase: any = {
+      edgeId,
+    };
+
+    // Date filters
+    if (fromDate || toDate) {
+      surveyWhereBase.startTime = {};
+      hazardWhereBase.createdAt = {};
+      if (fromDate) {
+        surveyWhereBase.startTime.gte = fromDate;
+        hazardWhereBase.createdAt.gte = fromDate;
+      }
+      if (toDate) {
+        surveyWhereBase.startTime.lte = toDate;
+        hazardWhereBase.createdAt.lte = toDate;
+      }
+    }
+
+    // Entity scoping for non-admins
+    let scopedCityHallId: string | null = null;
+    if (authUser?.id && !authUser.roles?.includes("admin")) {
+      const dbUser = await this.prisma.user.findUnique({
+        where: { id: authUser.id },
+        select: { cityHallId: true },
+      });
+      if (dbUser?.cityHallId) {
+        scopedCityHallId = dbUser.cityHallId;
+        surveyWhereBase.project = {
+          ...(surveyWhereBase.project || {}),
+          cityHallId: dbUser.cityHallId,
+        };
+        hazardWhereBase.project = {
+          ...(hazardWhereBase.project || {}),
+          cityHallId: dbUser.cityHallId,
+        };
+      }
+    }
+
+    // Build where clause for RoadRatingHistory
+    const historyWhere: any = {
+      roadId: edgeId,
+    };
+
+    if (scopedCityHallId) {
+      historyWhere.entityId = scopedCityHallId;
+    }
+
+    if (fromDate || toDate) {
+      historyWhere.createdAt = {};
+      if (fromDate) {
+        historyWhere.createdAt.gte = fromDate;
+      }
+      if (toDate) {
+        historyWhere.createdAt.lte = toDate;
+      }
+    }
+
+    // Get RoadRatingHistory entries
+    const transactionResult = await this.prisma.$transaction([
+      this.prisma.roadRatingHistory.findMany({
+        where: historyWhere,
+        select: {
+          id: true,
+          roadId: true,
+          eiri: true,
+          userId: true,
+          surveyId: true,
+          projectId: true,
+          anomaliesCount: true,
+          createdAt: true,
+        } as any,
+        orderBy: { createdAt: "desc" },
+      }),
+      this.prisma.roadRatingHistory.aggregate({
+        where: historyWhere,
+        _avg: { eiri: true },
+      }),
+    ]);
+    const historyEntries = transactionResult[0] as any[];
+    const avgResult = transactionResult[1];
+
+    // Get unique projectIds and surveyIds
+    const projectIdsFromHistory = Array.from(
+      new Set((historyEntries as any[]).map((h: any) => h.projectId).filter((id: any): id is string => id !== null))
+    );
+    const surveyIdsFromHistory = Array.from(
+      new Set((historyEntries as any[]).map((h: any) => h.surveyId).filter((id: any): id is string => id !== null))
+    );
+
+    // Fetch projects and surveys in parallel
+    const [projects, surveys] = await Promise.all([
+      projectIdsFromHistory.length > 0
+        ? this.prisma.project.findMany({
+            where: { id: { in: projectIdsFromHistory } },
+            select: {
+              id: true,
+              name: true,
+              createdBy: true,
+              description: true,
+              cityHallId: true,
+            },
+          })
+        : Promise.resolve([]),
+      surveyIdsFromHistory.length > 0
+        ? this.prisma.survey.findMany({
+            where: {
+              id: { in: surveyIdsFromHistory },
+            },
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              startTime: true,
+              endTime: true,
+              eIriAvg: true,
+              projectId: true,
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    // Create lookup maps
+    const projectById = new Map(projects.map((p) => [p.id, p]));
+    const surveyById = new Map(surveys.map((s) => [s.id, s]));
+
+    // Calculate totals
+    const validHistoryEntries = (historyEntries as any[]).filter(
+      (h: any) => h.surveyId && surveyById.has(h.surveyId)
+    );
+    const totalSurveys = validHistoryEntries.length;
+    const averageEiri = avgResult._avg.eiri ?? null;
+
+    // Get unique users (project creators)
+    const uniqueCreatorIds = new Set(
+      projects.map((p) => p.createdBy).filter((id): id is string => id !== null && id !== undefined)
+    );
+    const uniqueUsers = uniqueCreatorIds.size;
+
+    const creatorIds = Array.from(uniqueCreatorIds);
+    const creators =
+      creatorIds.length > 0
+        ? await this.prisma.user.findMany({
+            where: { id: { in: creatorIds } },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              username: true,
+            },
+          })
+        : [];
+
+    const creatorNameById = new Map<string, string>();
+    for (const u of creators) {
+      const fullName = [u.firstName, u.lastName].filter(Boolean).join(" ").trim();
+      creatorNameById.set(u.id, fullName || u.username || u.id);
+    }
+
+    // Calculate total anomalies
+    const totalAnomalies = validHistoryEntries.reduce(
+      (sum: number, h: any) => sum + (h.anomaliesCount ?? 0),
+      0
+    );
+
+    // Get recent surveys (limit 20)
+    const recentSurveysWithCreator = validHistoryEntries
+      .filter((h: any) => h.surveyId && surveyById.has(h.surveyId))
+      .slice(0, 20)
+      .map((h: any) => {
+        const project = h.projectId ? projectById.get(h.projectId) : null;
+        const survey = surveyById.get(h.surveyId);
+        const creatorId = project?.createdBy as string | undefined;
+        return {
+          id: survey?.id ?? null,
+          projectId: h.projectId ?? null,
+          name: survey?.name ?? null,
+          status: survey?.status ?? null,
+          startTime: survey?.startTime ?? null,
+          endTime: survey?.endTime ?? null,
+          eIriAvg: h.eiri,
+          createdBy: creatorId ?? null,
+          createdByName: creatorId ? creatorNameById.get(creatorId) ?? null : null,
+          projectDescription: project?.description ?? null,
+          anomalyCount: h.anomaliesCount ?? 0,
+        };
+      });
+
+    // Get projectIds for anomaly queries
+    const projectIds = Array.from(
+      new Set(validHistoryEntries.map((h: any) => h.projectId).filter((id: any): id is string => id !== null))
+    );
+
+    // Get recent anomalies
+    const hazardWhere: any = {
+      edgeId,
+      projectId: projectIds.length > 0 ? { in: projectIds } : { in: [] },
+    };
+
+    if (fromDate || toDate) {
+      hazardWhere.createdAt = {};
+      if (fromDate) {
+        hazardWhere.createdAt.gte = fromDate;
+      }
+      if (toDate) {
+        hazardWhere.createdAt.lte = toDate;
+      }
+    }
+
+    if (scopedCityHallId) {
+      hazardWhere.project = {
+        cityHallId: scopedCityHallId,
+      };
+    }
+
+    const recentAnomaliesRaw = await this.prisma.hazard.findMany({
+      where: hazardWhere,
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      include: {
+        project: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    const recentAnomaliesWithNames = recentAnomaliesRaw.map((anomaly: any, index: number) => {
+      const { project, ...anomalyWithoutProject } = anomaly;
+      return {
+        ...anomalyWithoutProject,
+        projectName: project?.name ?? null,
+        anomalyName: anomaly.name ?? null,
+        index: index + 1,
+      };
+    });
+
+    // Calculate daily EIRI data
+    const dailyEiriData = this.calculateDailyEiriDataFromHistory(
+      validHistoryEntries,
+      fromDate,
+      toDate
+    );
+
+    return {
+      edgeId,
+      from: fromDate ?? null,
+      to: toDate ?? null,
+      totalSurveys,
+      totalAnomalies,
+      uniqueUsers,
+      averageEiri,
+      recentSurveys: recentSurveysWithCreator,
+      recentAnomalies: recentAnomaliesWithNames,
+      dailyEiriData,
+    };
+  }
+
+  /**
+   * Calculate daily EIRI data from history entries
+   */
+  private calculateDailyEiriDataFromHistory(
+    historyEntries: any[],
+    fromDate: Date | undefined,
+    toDate: Date | undefined
+  ): Array<{
+    date: string;
+    day: string;
+    dayNumber: number;
+    month: string;
+    value: number | null;
+  }> {
+    const endDate = toDate ? new Date(toDate) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+
+    let startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - 6);
+    startDate.setHours(0, 0, 0, 0);
+
+    if (fromDate) {
+      const fromDateNormalized = new Date(fromDate);
+      fromDateNormalized.setHours(0, 0, 0, 0);
+      if (fromDateNormalized > startDate) {
+        startDate = fromDateNormalized;
+      }
+    }
+
+    const eiriByDate = new Map<string, number[]>();
+    for (const h of historyEntries) {
+      if (!h.createdAt) continue;
+      const date = new Date(h.createdAt);
+      if (date < startDate || date > endDate) continue;
+      
+      const dateKey = date.toISOString().split("T")[0];
+      if (!eiriByDate.has(dateKey)) {
+        eiriByDate.set(dateKey, []);
+      }
+      eiriByDate.get(dateKey)!.push(h.eiri);
+    }
+
+    const dailyData: Array<{
+      date: string;
+      day: string;
+      dayNumber: number;
+      month: string;
+      value: number | null;
+    }> = [];
+
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+    for (let i = 0; i < 7; i++) {
+      const currentDate = new Date(startDate);
+      currentDate.setDate(startDate.getDate() + i);
+      
+      const dateKey = currentDate.toISOString().split("T")[0];
+      const dayOfWeek = currentDate.getDay();
+      const dayNumber = currentDate.getDate();
+      const monthIndex = currentDate.getMonth();
+
+      let value: number | null = null;
+      const dayEiris = eiriByDate.get(dateKey);
+      if (dayEiris && dayEiris.length > 0) {
+        const sum = dayEiris.reduce((a: number, b: number) => a + b, 0);
+        value = Math.round((sum / dayEiris.length) * 100) / 100;
+      }
+
+      dailyData.push({
+        date: dateKey,
+        day: dayNames[dayOfWeek],
+        dayNumber,
+        month: monthNames[monthIndex],
+        value,
+      });
+    }
+
+    return dailyData;
   }
 
   private getEiriColor(eiri: number): string {

@@ -237,7 +237,7 @@ export class MobileService {
     return { projectId };
   }
   async endProject(body: any, user: UserInfo) {
-    const { projectId, numAttachments, geometry, anomalies, startDate, endDate, videoUrl, videoMetadata } = body ?? {};
+    const { projectId, numAttachments, geometry, anomalies, startDate, endDate } = body ?? {};
 
     if (!projectId) {
       throw new Error("projectId is required");
@@ -508,36 +508,14 @@ export class MobileService {
       });
     }
 
-    // Update project status to completed and save video URL if provided
-    const projectUpdateData: any = { status: "completed" };
-    if (videoUrl) {
-      projectUpdateData.videoUrl = videoUrl;
-    }
-    await this.prisma.project.update({ where: { id: projectId }, data: projectUpdateData });
-
-    // Save video metadata if provided
-    if (videoUrl && Array.isArray(videoMetadata) && videoMetadata.length > 0) {
-      // Delete existing video metadata for this project to allow updates
-      await this.prisma.videoMetadata.deleteMany({
-        where: { projectId },
-      });
-
-      // Create new video metadata entries
-      await this.prisma.videoMetadata.createMany({
-        data: videoMetadata.map((meta: any) => ({
-          projectId,
-          videoTime: meta.videoTime,
-          lat: meta.lat,
-          lng: meta.lng,
-        })),
-      });
-    }
+    // Update project status to completed
+    await this.prisma.project.update({ where: { id: projectId }, data: { status: "completed" } });
 
     return { success: true, surveyId: survey.id };
   }
 
   async uploadAttachments(body: any) {
-    const { projectId, type, files, videoMetadata } = body ?? {};
+    const { projectId, type, files } = body ?? {};
     const uploaded = Array.isArray(files) ? files.length : 0;
 
     // If type is video, save the first video URL to the project
@@ -546,24 +524,6 @@ export class MobileService {
         where: { id: projectId },
         data: { videoUrl: files[0] },
       });
-
-      // Save video metadata if provided
-      if (Array.isArray(videoMetadata) && videoMetadata.length > 0) {
-        // Delete existing video metadata for this project to allow updates
-        await this.prisma.videoMetadata.deleteMany({
-          where: { projectId },
-        });
-
-        // Create new video metadata entries
-        await this.prisma.videoMetadata.createMany({
-          data: videoMetadata.map((meta: any) => ({
-            projectId,
-            videoTime: meta.videoTime,
-            lat: meta.lat,
-            lng: meta.lng,
-          })),
-        });
-      }
     }
 
     return { uploaded, remaining: 0, complete: true, projectId, type };

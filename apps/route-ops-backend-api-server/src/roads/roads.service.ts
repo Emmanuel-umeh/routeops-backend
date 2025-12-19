@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
 import * as fs from "fs";
 import * as path from "path";
 // NOTE: When you install the GeoPackage library, adjust this import to match its docs.
@@ -42,6 +43,12 @@ export interface NearestEdgeResponse {
 export class RoadsService {
   private readonly logger = new Logger(RoadsService.name);
   private gpkgCache: Map<string, { gpkg: any; featureDao: any; featureIndexManager: any; tableName: string }> = new Map();
+  // Cache for nearest edge queries (key: "lat_lng_radius", value: NearestEdgeResult)
+  private nearestEdgeCache: Map<string, NearestEdgeResult | null> = new Map();
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  private cacheTimestamps: Map<string, number> = new Map();
+
+  constructor(private readonly prisma: PrismaService) {}
 
   // From your attribute list: fid, full_id, osm_id, osm_type, highway, name, ...
   // We'll treat osm_id as our stable edgeId, and name as the human-readable road name.
@@ -136,6 +143,17 @@ export class RoadsService {
     lng: number,
     radiusMeters: number
   ): Promise<NearestEdgeResult | null> {
+    // Check cache first (round coordinates to ~10m precision for cache key)
+    const cacheKey = `${Math.round(lat * 10000) / 10000}_${Math.round(lng * 10000) / 10000}_${radiusMeters}`;
+    const cachedTimestamp = this.cacheTimestamps.get(cacheKey);
+    if (cachedTimestamp && Date.now() - cachedTimestamp < this.CACHE_TTL_MS) {
+      const cached = this.nearestEdgeCache.get(cacheKey);
+      if (cached !== undefined) {
+        this.logger.log(`Cache hit for nearest edge query: ${cacheKey}`);
+        return cached;
+      }
+    }
+
     // Get all .gpkg files in map-files directory
     const gpkgFiles = await this.getGeoPackageFiles();
 
@@ -561,12 +579,45 @@ export class RoadsService {
       this.logger.log(`First feature has _extractedGeometry: ${!!firstFeature._extractedGeometry}, type: ${firstFeature._extractedGeometry?.type}`);
     }
 
+    // Limit features to process (performance optimization)
+    const MAX_FEATURES_TO_PROCESS = 200;
+    const featuresToProcess = features.slice(0, MAX_FEATURES_TO_PROCESS);
+    if (features.length > MAX_FEATURES_TO_PROCESS) {
+      this.logger.log(`Limiting feature processing to ${MAX_FEATURES_TO_PROCESS} of ${features.length} features`);
+    }
+
+    // Sort features by approximate distance (using bbox center) before exact calculation
+    // clickPoint is already defined earlier in the function
+    featuresToProcess.sort((a: any, b: any) => {
+      const geomA = (a as any)._extractedGeometry;
+      const geomB = (b as any)._extractedGeometry;
+      if (!geomA || !geomB) return 0;
+      
+      // Calculate approximate distance using bbox center
+      const getBboxCenter = (geom: any) => {
+        if (geom.type === "LineString" && geom.coordinates?.length > 0) {
+          const midIdx = Math.floor(geom.coordinates.length / 2);
+          return turf.point(geom.coordinates[midIdx]);
+        }
+        return null;
+      };
+      
+      const centerA = getBboxCenter(geomA);
+      const centerB = getBboxCenter(geomB);
+      if (!centerA || !centerB) return 0;
+      
+      const distA = turf.distance(clickPoint, centerA, { units: "meters" });
+      const distB = turf.distance(clickPoint, centerB, { units: "meters" });
+      return distA - distB;
+    });
+
     let bestFeature: any = null;
     let bestDistance = Infinity;
     let processedCount = 0;
     let distanceCalculationFailures = 0;
+    const EARLY_EXIT_DISTANCE = 5; // Exit early if we find a match within 5 meters
 
-    for (const row of features) {
+    for (const row of featuresToProcess) {
       // Features should have geometry extracted and stored in _extractedGeometry during filtering
       let geom: any = (row as any)._extractedGeometry;
       let feature: any = row;
@@ -641,6 +692,12 @@ export class RoadsService {
         // Ensure the best feature has the extracted geometry (should already be set, but just in case)
         if (!(bestFeature as any)._extractedGeometry && geom) {
           (bestFeature as any)._extractedGeometry = geom;
+        }
+        
+        // Early exit if we found a very close match (performance optimization)
+        if (bestDistance < EARLY_EXIT_DISTANCE) {
+          this.logger.log(`Early exit: found very close match at ${bestDistance}m`);
+          break;
         }
       }
     }
@@ -752,7 +809,7 @@ export class RoadsService {
 
     // Return both formats: original format for backward compatibility
     // and GeoJSON Feature for direct Google Maps consumption
-    return {
+    const result: NearestEdgeResult = {
       edgeId: edgeId ?? null,
       distanceMeters:
         typeof bestDistance === "number" && !isNaN(bestDistance) ? bestDistance : null,
@@ -760,6 +817,23 @@ export class RoadsService {
       projectId: null,
       geometry: finalGeometry, // LineString GeoJSON for map display
     };
+
+    // Cache the result
+    this.nearestEdgeCache.set(cacheKey, result);
+    this.cacheTimestamps.set(cacheKey, Date.now());
+    
+    // Clean up old cache entries (keep cache size reasonable)
+    if (this.nearestEdgeCache.size > 1000) {
+      const now = Date.now();
+      for (const [key, timestamp] of this.cacheTimestamps.entries()) {
+        if (now - timestamp > this.CACHE_TTL_MS) {
+          this.nearestEdgeCache.delete(key);
+          this.cacheTimestamps.delete(key);
+        }
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -883,6 +957,158 @@ export class RoadsService {
     }
 
     return result;
+  }
+
+  /**
+   * Find nearest edge using PostGIS (faster than GPKG file reading)
+   */
+  async findNearestEdgePostgis(
+    lat: number,
+    lng: number,
+    radiusMeters: number,
+    cityHallId?: string | null
+  ): Promise<NearestEdgeResult | null> {
+    // Check cache first
+    const cacheKey = `${Math.round(lat * 10000) / 10000}_${Math.round(lng * 10000) / 10000}_${radiusMeters}_${cityHallId || 'all'}`;
+    const cachedTimestamp = this.cacheTimestamps.get(cacheKey);
+    if (cachedTimestamp && Date.now() - cachedTimestamp < this.CACHE_TTL_MS) {
+      const cached = this.nearestEdgeCache.get(cacheKey);
+      if (cached !== undefined) {
+        this.logger.log(`Cache hit for PostGIS nearest edge query: ${cacheKey}`);
+        return cached;
+      }
+    }
+
+    try {
+      // Build SQL query with PostGIS spatial functions
+      let sql = `
+        SELECT 
+          edge_id,
+          name,
+          highway,
+          ST_AsGeoJSON(geom)::jsonb as geometry,
+          ST_Distance(
+            geom::geography,
+            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+          ) as distance_meters
+        FROM "Road"
+        WHERE ST_DWithin(
+          geom::geography,
+          ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+          $3
+        )
+      `;
+
+      const params: any[] = [lng, lat, radiusMeters];
+
+      // Add city hall filter if provided
+      if (cityHallId) {
+        sql += ` AND city_hall_id = $4`;
+        params.push(cityHallId);
+      }
+
+      sql += ` ORDER BY distance_meters ASC LIMIT 1;`;
+
+      const result = await this.prisma.$queryRawUnsafe<Array<{
+        edge_id: string;
+        name: string | null;
+        highway: string | null;
+        geometry: any;
+        distance_meters: number;
+      }>>(sql, ...params);
+
+      if (!result || result.length === 0) {
+        // Cache null result
+        this.nearestEdgeCache.set(cacheKey, null);
+        this.cacheTimestamps.set(cacheKey, Date.now());
+        return null;
+      }
+
+      const row = result[0];
+      const geometry = row.geometry;
+
+      const nearestEdge: NearestEdgeResult = {
+        edgeId: row.edge_id ?? null,
+        distanceMeters: row.distance_meters ?? null,
+        roadName: row.name ?? row.highway ?? null,
+        projectId: null,
+        geometry: geometry || null,
+      };
+
+      // Cache the result
+      this.nearestEdgeCache.set(cacheKey, nearestEdge);
+      this.cacheTimestamps.set(cacheKey, Date.now());
+
+      return nearestEdge;
+    } catch (error: any) {
+      this.logger.error(`PostGIS query failed: ${error?.message || error}`);
+      // Fallback to GPKG method if PostGIS fails
+      this.logger.warn("Falling back to GPKG method");
+      return this.findNearestEdge(lat, lng, radiusMeters);
+    }
+  }
+
+  /**
+   * Generate vector tile (MVT) for roads using PostGIS
+   * Returns binary MVT (Mapbox Vector Tile) format
+   */
+  async getVectorTile(
+    z: number,
+    x: number,
+    y: number,
+    cityHallId?: string | null
+  ): Promise<Buffer | null> {
+    try {
+      // Calculate tile bounding box
+      const n = Math.pow(2, z);
+      const lon_deg = (x / n) * 360.0 - 180.0;
+      const lat_rad = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n)));
+      const lat_deg = (lat_rad * 180.0) / Math.PI;
+
+      const lon_deg_next = ((x + 1) / n) * 360.0 - 180.0;
+      const lat_rad_next = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n)));
+      const lat_deg_next = (lat_rad_next * 180.0) / Math.PI;
+
+      // Build SQL query for MVT generation
+      let sql = `
+        SELECT ST_AsMVT(q, 'roads', 4096, 'geom') as mvt
+        FROM (
+          SELECT 
+            edge_id,
+            name,
+            highway,
+            ST_AsMVTGeom(
+              geom,
+              ST_MakeEnvelope($1, $2, $3, $4, 4326),
+              4096,
+              256,
+              true
+            ) as geom
+          FROM "Road"
+          WHERE geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+      `;
+
+      const params: any[] = [lon_deg, lat_deg_next, lon_deg_next, lat_deg];
+
+      // Add city hall filter if provided
+      if (cityHallId) {
+        sql += ` AND city_hall_id = $5`;
+        params.push(cityHallId);
+      }
+
+      sql += `) as q WHERE q.geom IS NOT NULL;`;
+
+      const result = await this.prisma.$queryRawUnsafe<Array<{ mvt: Buffer }>>(sql, ...params);
+
+      if (!result || result.length === 0 || !result[0]?.mvt) {
+        return null;
+      }
+
+      return Buffer.from(result[0].mvt);
+    } catch (error: any) {
+      this.logger.error(`Vector tile generation failed: ${error?.message || error}`);
+      return null;
+    }
   }
 }
 

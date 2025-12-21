@@ -1,5 +1,6 @@
 import { Controller, Get, Query, Post, Body, BadRequestException, UseGuards, Req, Param, Res } from "@nestjs/common";
 import { Response } from "express";
+import { getEiriColorName } from "../util/eiriColor.util";
 import * as swagger from "@nestjs/swagger";
 import { RoadsService, NearestEdgeResponse } from "./roads.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -142,6 +143,109 @@ export class RoadsController {
       edgeId: result.edgeId,
       json: geoJsonFeature,
     };
+  }
+
+  @Get("all")
+  @UseGuards(DefaultAuthGuard)
+  @swagger.ApiOperation({
+    summary: "Get all roads for the user's entity as GeoJSON (for initial map load)",
+    description: "Returns all roads with ratings as GeoJSON FeatureCollection. Use this on initial load instead of bbox-based calls. Roads stay rendered as user pans the map. Supports the same filters as the bbox endpoint.",
+  })
+  @swagger.ApiQuery({ name: "months", required: false, description: "Lookback window in months (default 6)" })
+  @swagger.ApiQuery({ name: "startDate", required: false, description: "Start date filter (DD/MM/YYYY)" })
+  @swagger.ApiQuery({ name: "endDate", required: false, description: "End date filter (DD/MM/YYYY)" })
+  @swagger.ApiQuery({ name: "eiriMin", required: false, description: "Minimum eIRI value" })
+  @swagger.ApiQuery({ name: "eiriMax", required: false, description: "Maximum eIRI value" })
+  @swagger.ApiQuery({ name: "eiriRange", required: false, description: "eIRI range (e.g., '0-1.5')" })
+  @swagger.ApiQuery({ name: "operator", required: false, description: "Filter by operator (project creator)" })
+  @swagger.ApiQuery({ name: "operatorId", required: false, description: "Filter by operator ID (project creator)" })
+  @swagger.ApiQuery({ name: "status", required: false, description: "Filter by project status" })
+  @swagger.ApiOkResponse({
+    description: "GeoJSON FeatureCollection with all roads and ratings",
+    schema: {
+      type: "object",
+      properties: {
+        type: { type: "string", example: "FeatureCollection" },
+        features: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", example: "Feature" },
+              properties: {
+                type: "object",
+                properties: {
+                  edge_id: { type: "string" },
+                  name: { type: "string", nullable: true },
+                  highway: { type: "string", nullable: true },
+                  eiri: { type: "number" },
+                  color: { type: "string" },
+                },
+              },
+              geometry: {
+                type: "object",
+                properties: {
+                  type: { type: "string", example: "LineString" },
+                  coordinates: { type: "array", items: { type: "array", items: { type: "number" } } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  })
+  async getAllRoads(
+    @UserData() userInfo?: UserInfo,
+    @Query("months") months?: string,
+    @Query("startDate") startDate?: string,
+    @Query("endDate") endDate?: string,
+    @Query("eiriMin") eiriMin?: string,
+    @Query("eiriMax") eiriMax?: string,
+    @Query("eiriRange") eiriRange?: string,
+    @Query("operator") operator?: string,
+    @Query("operatorId") operatorId?: string,
+    @Query("status") status?: string
+  ) {
+    if (!userInfo?.id) {
+      throw new BadRequestException("Authentication required");
+    }
+
+    // Get user's entityId (cityHallId)
+    const user = await this.prisma.user.findUnique({
+      where: { id: userInfo.id },
+      select: { cityHallId: true },
+    });
+
+    if (!user?.cityHallId) {
+      return {
+        type: "FeatureCollection",
+        features: [],
+      };
+    }
+
+    // Parse all filters (same as bbox endpoint)
+    const parsedStartDate = parseDate(startDate);
+    const parsedEndDate = parseDate(endDate, true);
+    const range = extractEiriRange(eiriRange);
+    const parsedEiriMin = parseNumber(eiriMin) ?? range.min;
+    const parsedEiriMax = parseNumber(eiriMax) ?? range.max;
+    const parsedOperator = getString(operator) ?? getString(operatorId);
+    const parsedStatus = parseStatus(status);
+
+    const geoJson = await this.roadsService.getAllRoadsAsGeoJson(
+      user.cityHallId,
+      {
+        months: months ? Number(months) : undefined,
+        startDate: parsedStartDate,
+        endDate: parsedEndDate,
+        eiriMin: parsedEiriMin,
+        eiriMax: parsedEiriMax,
+        operator: parsedOperator,
+        status: parsedStatus as string | undefined,
+      }
+    );
+    return geoJson || { type: "FeatureCollection", features: [] };
   }
 
   @Get("ratings")
@@ -1120,11 +1224,7 @@ export class RoadsController {
   }
 
   private getEiriColor(eiri: number): string {
-    if (eiri < 1.5) return "green";
-    if (eiri < 2.5) return "light_green";
-    if (eiri < 3.5) return "light_orange";
-    if (eiri < 4.5) return "orange";
-    return "red";
+    return getEiriColorName(eiri);
   }
 }
 

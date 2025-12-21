@@ -46,6 +46,7 @@
     "backfill:road-rating-aggregates": "ts-node scripts/backfillRoadRatingAggregates.ts",
     "clean:orphaned-road-rating-history": "ts-node scripts/deleteOrphanedRoadRatingHistory.ts",
     "migrate:gpkg-to-postgis": "ts-node scripts/migrateGpkgToPostgis.ts",
+    "migrate:gpkg-to-postgis:prod": "ts-node scripts/migrateGpkgToPostgisProd.ts",
     "docker:dev": "docker-compose -f docker-compose.dev.yml up -d",
     "package:container": "docker build .",
     "compose:up": "docker-compose up -d",

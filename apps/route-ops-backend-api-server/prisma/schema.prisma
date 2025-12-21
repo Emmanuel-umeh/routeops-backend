@@ -23,6 +23,7 @@ model CityHall {
   users             User[]
   roadRatingHistory RoadRatingHistory[]
   roadRatings       RoadRating[]
+  roads             Road[]
 }
 
 model RoutePoint {
@@ -39,24 +40,24 @@ model RoutePoint {
 }
 
 model Project {
-  assignedUser        String?
-  cityHall            CityHall?            @relation(fields: [cityHallId], references: [id])
-  cityHallId          String?
-  createdAt           DateTime             @default(now())
-  createdBy           String?
-  description         String?
-  hazards             Hazard[]
-  id                  String               @id @default(uuid())
-  name                String?
-  routePoints         RoutePoint[]
-  scheduledDate       DateTime?
-  startDate           DateTime?
-  status              EnumProjectStatus?
-  surveys             Survey[]
-  roadRatingHistory   RoadRatingHistory[]
-  updatedAt           DateTime             @updatedAt
-  videoUrl            String?
-  videoMetadata       VideoMetadata[]
+  assignedUser      String?
+  cityHall          CityHall?           @relation(fields: [cityHallId], references: [id])
+  cityHallId        String?
+  createdAt         DateTime            @default(now())
+  createdBy         String?
+  description       String?
+  hazards           Hazard[]
+  id                String              @id @default(uuid())
+  name              String?
+  routePoints       RoutePoint[]
+  scheduledDate     DateTime?
+  startDate         DateTime?
+  status            EnumProjectStatus?
+  surveys           Survey[]
+  roadRatingHistory RoadRatingHistory[]
+  updatedAt         DateTime            @updatedAt
+  videoUrl          String?
+  videoMetadata     VideoMetadata[]
 }
 
 model Remark {
@@ -99,27 +100,27 @@ model Hazard {
 }
 
 model Survey {
-  assignedUser         String?
-  createdAt           DateTime            @default(now())
-  endTime             DateTime?
-  id                  String              @id @default(uuid())
-  name                String?
-  project             Project?            @relation(fields: [projectId], references: [id])
-  projectId           String?
-  remarks             Remark[]
-  remarksText         String?
-  startTime           DateTime?
-  status              String?
-  roadRatingHistory   RoadRatingHistory[]
+  assignedUser      String?
+  createdAt         DateTime            @default(now())
+  endTime           DateTime?
+  id                String              @id @default(uuid())
+  name              String?
+  project           Project?            @relation(fields: [projectId], references: [id])
+  projectId         String?
+  remarks           Remark[]
+  remarksText       String?
+  startTime         DateTime?
+  status            String?
+  roadRatingHistory RoadRatingHistory[]
   // Geometry for Google Maps (GeoJSON LineString/MultiLineString)
   // Each point in the geometry can have an edgeId in its properties
-  geometryJson Json?
+  geometryJson      Json?
   // Bounding box [minLng, minLat, maxLng, maxLat]
-  bbox         Json?
+  bbox              Json?
   // Aggregates for dashboard
-  eIriAvg      Float?
-  lengthMeters Float?
-  updatedAt    DateTime  @updatedAt
+  eIriAvg           Float?
+  lengthMeters      Float?
+  updatedAt         DateTime            @updatedAt
 
   /// All distinct edgeIds this survey has traversed (denormalized for fast edge analytics)
   edgeIds String[]
@@ -172,18 +173,18 @@ enum EnumVehicleType {
 
 model RoadRatingHistory {
   id             String   @id @default(uuid())
-  entityId      String   // CityHall.id
-  roadId         String   // edgeId
-  eiri           Float    // EIRI rating
-  userId         String   // User.id who made the survey
-  surveyId       String?  // Survey.id (denormalized for analytics)
-  projectId      String?  // Project.id (denormalized for analytics)
-  anomaliesCount Int?     // Pre-calculated anomalies count for this survey+edge
+  entityId       String // CityHall.id
+  roadId         String // edgeId
+  eiri           Float // EIRI rating
+  userId         String // User.id who made the survey
+  surveyId       String? // Survey.id (denormalized for analytics)
+  projectId      String? // Project.id (denormalized for analytics)
+  anomaliesCount Int? // Pre-calculated anomalies count for this survey+edge
   createdAt      DateTime @default(now())
 
-  entity CityHall @relation(fields: [entityId], references: [id])
-  user   User     @relation(fields: [userId], references: [id])
-  survey Survey?  @relation(fields: [surveyId], references: [id])
+  entity  CityHall @relation(fields: [entityId], references: [id])
+  user    User     @relation(fields: [userId], references: [id])
+  survey  Survey?  @relation(fields: [surveyId], references: [id])
   project Project? @relation(fields: [projectId], references: [id])
 
   @@index([entityId, roadId])
@@ -212,11 +213,29 @@ model VideoMetadata {
   id        String   @id @default(uuid())
   project   Project  @relation(fields: [projectId], references: [id])
   projectId String
-  videoTime Int      // Time in seconds within the video
-  lat       Float    // Latitude at this video time
-  lng       Float    // Longitude at this video time
+  videoTime Int // Time in seconds within the video
+  lat       Float // Latitude at this video time
+  lng       Float // Longitude at this video time
   createdAt DateTime @default(now())
 
   @@index([projectId])
   @@index([projectId, videoTime]) // For efficient queries by project and time
+}
+
+model Road {
+  id         Int                                       @id @default(autoincrement())
+  edgeId     String                                    @map("edge_id")
+  cityHallId String                                    @map("city_hall_id")
+  name       String?
+  highway    String?
+  geom       Unsupported("geometry(LineString,4326)")? // PostGIS geometry - use raw SQL for spatial operations
+  properties Json?                                     @default("{}")
+  createdAt  DateTime                                  @default(now()) @map("created_at")
+
+  cityHall CityHall @relation(fields: [cityHallId], references: [id], onDelete: Cascade)
+
+  @@index([edgeId])
+  @@index([cityHallId])
+  @@index([edgeId, cityHallId])
+  @@map("Road")
 }

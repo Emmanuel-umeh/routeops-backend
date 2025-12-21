@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { getEiriHexColor } from "../util/eiriColor.util";
 import * as fs from "fs";
 import * as path from "path";
 // NOTE: When you install the GeoPackage library, adjust this import to match its docs.
@@ -45,7 +46,10 @@ export class RoadsService {
   private gpkgCache: Map<string, { gpkg: any; featureDao: any; featureIndexManager: any; tableName: string }> = new Map();
   // Cache for nearest edge queries (key: "lat_lng_radius", value: NearestEdgeResult)
   private nearestEdgeCache: Map<string, NearestEdgeResult | null> = new Map();
-  private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  // Longer cache on production (Render) to reduce database load
+  private readonly CACHE_TTL_MS = process.env.NODE_ENV === 'production' 
+    ? 15 * 60 * 1000  // 15 minutes on production
+    : 5 * 60 * 1000;  // 5 minutes on development
   private cacheTimestamps: Map<string, number> = new Map();
 
   constructor(private readonly prisma: PrismaService) {}
@@ -980,7 +984,8 @@ export class RoadsService {
     }
 
     try {
-      // Build SQL query with PostGIS spatial functions
+      // Optimized PostGIS query for Render (uses spatial index efficiently)
+      // Using ST_DWithin with geography for accurate distance, but limiting results early
       let sql = `
         SELECT 
           edge_id,
@@ -1001,21 +1006,38 @@ export class RoadsService {
 
       const params: any[] = [lng, lat, radiusMeters];
 
-      // Add city hall filter if provided
+      // Add city hall filter if provided (uses index)
       if (cityHallId) {
         sql += ` AND city_hall_id = $4`;
         params.push(cityHallId);
       }
 
-      sql += ` ORDER BY distance_meters ASC LIMIT 1;`;
+      // Order and limit early to reduce processing
+      // Use index scan hint for better performance on Render
+      sql += ` 
+        ORDER BY geom <-> ST_SetSRID(ST_MakePoint($1, $2), 4326)
+        LIMIT 1;
+      `;
 
-      const result = await this.prisma.$queryRawUnsafe<Array<{
+      // Set query timeout for Render (30 seconds max)
+      const result = await Promise.race([
+        this.prisma.$queryRawUnsafe<Array<{
+          edge_id: string;
+          name: string | null;
+          highway: string | null;
+          geometry: any;
+          distance_meters: number;
+        }>>(sql, ...params),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Query timeout')), 30000)
+        )
+      ]) as Array<{
         edge_id: string;
         name: string | null;
         highway: string | null;
         geometry: any;
         distance_meters: number;
-      }>>(sql, ...params);
+      }>;
 
       if (!result || result.length === 0) {
         // Cache null result
@@ -1051,6 +1073,8 @@ export class RoadsService {
   /**
    * Generate vector tile (MVT) for roads using PostGIS
    * Returns binary MVT (Mapbox Vector Tile) format
+   * Optimized for Render with query timeout and simplified geometry
+   * Includes road ratings (eIRI) for styling
    */
   async getVectorTile(
     z: number,
@@ -1069,36 +1093,50 @@ export class RoadsService {
       const lat_rad_next = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n)));
       const lat_deg_next = (lat_rad_next * 180.0) / Math.PI;
 
-      // Build SQL query for MVT generation
+      // Optimized MVT query for Render - simplified geometry at low zoom levels
+      const simplifyTolerance = z < 10 ? 0.0001 : 0.00001; // More simplification at low zoom
+      
+      // Include ratings in tiles by joining with RoadRating table
       let sql = `
         SELECT ST_AsMVT(q, 'roads', 4096, 'geom') as mvt
         FROM (
           SELECT 
-            edge_id,
-            name,
-            highway,
+            r.edge_id,
+            r.name,
+            r.highway,
+            COALESCE(rr.eiri, 0) as eiri,
             ST_AsMVTGeom(
-              geom,
+              CASE 
+                WHEN ${z} < 10 THEN ST_Simplify(r.geom, ${simplifyTolerance})
+                ELSE r.geom
+              END,
               ST_MakeEnvelope($1, $2, $3, $4, 4326),
               4096,
               256,
               true
             ) as geom
-          FROM "Road"
-          WHERE geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+          FROM "Road" r
+          LEFT JOIN "RoadRating" rr ON r.edge_id = rr."roadId" AND r.city_hall_id = rr."entityId"
+          WHERE r.geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
       `;
 
       const params: any[] = [lon_deg, lat_deg_next, lon_deg_next, lat_deg];
 
-      // Add city hall filter if provided
+      // Add city hall filter if provided (uses index)
       if (cityHallId) {
-        sql += ` AND city_hall_id = $5`;
+        sql += ` AND r.city_hall_id = $5`;
         params.push(cityHallId);
       }
 
       sql += `) as q WHERE q.geom IS NOT NULL;`;
 
-      const result = await this.prisma.$queryRawUnsafe<Array<{ mvt: Buffer }>>(sql, ...params);
+      // Add timeout for Render (15 seconds for tiles)
+      const result = await Promise.race([
+        this.prisma.$queryRawUnsafe<Array<{ mvt: Buffer }>>(sql, ...params),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Tile generation timeout')), 15000)
+        )
+      ]) as Array<{ mvt: Buffer }>;
 
       if (!result || result.length === 0 || !result[0]?.mvt) {
         return null;
@@ -1107,6 +1145,333 @@ export class RoadsService {
       return Buffer.from(result[0].mvt);
     } catch (error: any) {
       this.logger.error(`Vector tile generation failed: ${error?.message || error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Get all roads for an entity as GeoJSON FeatureCollection
+   * Optimized for initial load - returns all roads with ratings in one call
+   * This replaces the need for bbox-based API calls
+   * 
+   * Note: Uses raw SQL for PostGIS ST_AsGeoJSON function (not available in Prisma)
+   */
+  async getAllRoadsAsGeoJson(
+    cityHallId: string,
+    filters?: {
+      months?: number;
+      startDate?: Date;
+      endDate?: Date;
+      eiriMin?: number;
+      eiriMax?: number;
+      operator?: string;
+      status?: string;
+    }
+  ): Promise<{
+    type: "FeatureCollection";
+    features: Array<{
+      type: "Feature";
+      properties: {
+        edge_id: string;
+        name: string | null;
+        highway: string | null;
+        eiri: number;
+        color: string;
+      };
+      geometry: {
+        type: "LineString";
+        coordinates: number[][];
+      };
+    }>;
+  } | null> {
+    try {
+      // If no filters provided, return all roads with ratings (no defaults applied)
+      if (!filters || Object.keys(filters).length === 0) {
+        const roads = await this.prisma.$queryRawUnsafe<Array<{
+          edge_id: string;
+          name: string | null;
+          highway: string | null;
+          eiri: number;
+          geom: any; // GeoJSON from ST_AsGeoJSON
+        }>>(
+          `SELECT 
+            r.edge_id, 
+            r.name, 
+            r.highway, 
+            COALESCE(rr.eiri, 0) as eiri,
+            ST_AsGeoJSON(r.geom)::jsonb as geom 
+          FROM "Road" r
+          INNER JOIN "RoadRating" rr ON r.edge_id = rr."roadId" AND r.city_hall_id = rr."entityId"
+          WHERE r.city_hall_id = $1 
+          ORDER BY r.edge_id`,
+          cityHallId
+        );
+
+        if (!roads || roads.length === 0) {
+          return {
+            type: "FeatureCollection",
+            features: [],
+          };
+        }
+
+        // Convert to GeoJSON FeatureCollection
+        const features = roads
+          .filter((road) => road.geom && road.geom.coordinates)
+          .map((road) => {
+            const eiri = road.eiri || 0;
+            const color = getEiriHexColor(eiri);
+
+            return {
+              type: "Feature" as const,
+              properties: {
+                edge_id: road.edge_id,
+                name: road.name,
+                highway: road.highway,
+                eiri: eiri,
+                color: color,
+              },
+              geometry: road.geom as {
+                type: "LineString";
+                coordinates: number[][];
+              },
+            };
+          });
+
+        return {
+          type: "FeatureCollection",
+          features,
+        };
+      }
+
+      // Apply filters (same logic as bbox endpoint, but only when filters are provided)
+      const ratingWhere: any = {
+        entityId: cityHallId,
+      };
+
+      // eIRI filters
+      if (filters.eiriMin !== undefined || filters.eiriMax !== undefined) {
+        ratingWhere.eiri = {};
+        if (filters.eiriMin !== undefined) {
+          ratingWhere.eiri.gte = filters.eiriMin;
+        }
+        if (filters.eiriMax !== undefined) {
+          ratingWhere.eiri.lte = filters.eiriMax;
+        }
+      }
+
+      // Get all road ratings matching eIRI filter
+      const allRatings = await this.prisma.roadRating.findMany({
+        where: ratingWhere,
+        select: {
+          roadId: true,
+          eiri: true,
+        },
+      });
+
+      if (allRatings.length === 0) {
+        return {
+          type: "FeatureCollection",
+          features: [],
+        };
+      }
+
+      const roadIds = allRatings.map((r) => r.roadId);
+      const ratingByRoadId = new Map(allRatings.map((r) => [r.roadId, r.eiri]));
+
+      // Filter out roadIds that don't have at least 3 entries in RoadRatingHistory
+      const historyCounts = await this.prisma.roadRatingHistory.groupBy({
+        by: ["roadId"],
+        where: {
+          entityId: cityHallId,
+          roadId: { in: roadIds },
+        },
+        _count: {
+          roadId: true,
+        },
+      });
+
+      const roadIdsWithMinEntries = new Set<string>();
+      for (const count of historyCounts) {
+        if (count._count.roadId >= 3) {
+          roadIdsWithMinEntries.add(count.roadId);
+        }
+      }
+
+      const validRoadIds = roadIds.filter((rid) => roadIdsWithMinEntries.has(rid));
+
+      if (validRoadIds.length === 0) {
+        return {
+          type: "FeatureCollection",
+          features: [],
+        };
+      }
+
+      // Build where clause for RoadRatingHistory to filter by time (only if time filters provided)
+      const historyWhere: any = {
+        entityId: cityHallId,
+        roadId: { in: validRoadIds },
+      };
+
+      // Date filters - only apply if provided
+      if (filters.startDate || filters.endDate) {
+        historyWhere.createdAt = {};
+        if (filters.startDate) {
+          historyWhere.createdAt.gte = filters.startDate;
+        }
+        if (filters.endDate) {
+          historyWhere.createdAt.lte = filters.endDate;
+        }
+      } else if (filters.months !== undefined) {
+        // Only apply months lookback if explicitly provided
+        const lookbackMonths = Number.isFinite(filters.months) ? filters.months : 6;
+        const since = new Date();
+        since.setMonth(since.getMonth() - lookbackMonths);
+        historyWhere.createdAt = { gte: since };
+      }
+
+      // Get history entries (filtered by time if time filters provided, otherwise all)
+      const filteredHistory = await this.prisma.roadRatingHistory.findMany({
+        where: historyWhere,
+        select: {
+          roadId: true,
+          userId: true,
+        },
+      });
+
+      // Start with all roadIds from history (matching time filter if provided, otherwise all)
+      const filteredRoadIds = new Set<string>();
+      for (const h of filteredHistory) {
+        filteredRoadIds.add(h.roadId);
+      }
+
+      // If no time filters provided, use all validRoadIds instead of filtering by history
+      if (!filters.startDate && !filters.endDate && filters.months === undefined) {
+        filteredRoadIds.clear();
+        for (const roadId of validRoadIds) {
+          filteredRoadIds.add(roadId);
+        }
+      }
+
+      // Only filter by surveys if operator or status filters are provided
+      if (filters.operator || filters.status) {
+        const surveyWhere: any = {
+          edgeIds: { hasSome: validRoadIds },
+        };
+
+        if (filters.status) {
+          surveyWhere.project = {
+            status: filters.status,
+          };
+        }
+
+        if (filters.operator) {
+          surveyWhere.project = {
+            ...surveyWhere.project,
+            createdBy: filters.operator,
+          };
+        }
+
+        // Get surveys matching operator and status filters
+        const surveys = await this.prisma.survey.findMany({
+          where: surveyWhere,
+          select: {
+            edgeIds: true,
+          },
+        });
+
+        // Collect roadIds from surveys matching operator/status filters
+        const roadIdsFromSurveys = new Set<string>();
+        for (const survey of surveys) {
+          if (survey.edgeIds) {
+            for (const rid of survey.edgeIds) {
+              if (validRoadIds.includes(rid)) {
+                roadIdsFromSurveys.add(rid);
+              }
+            }
+          }
+        }
+
+        // Intersect: only keep roadIds that are in BOTH history AND surveys
+        const intersection = new Set<string>();
+        for (const roadId of filteredRoadIds) {
+          if (roadIdsFromSurveys.has(roadId)) {
+            intersection.add(roadId);
+          }
+        }
+        filteredRoadIds.clear();
+        for (const roadId of intersection) {
+          filteredRoadIds.add(roadId);
+        }
+      }
+
+      if (filteredRoadIds.size === 0) {
+        return {
+          type: "FeatureCollection",
+          features: [],
+        };
+      }
+
+      // Get roads with geometries for filtered roadIds
+      const roadIdsArray = Array.from(filteredRoadIds);
+      const placeholders = roadIdsArray.map((_, i) => `$${i + 2}`).join(",");
+
+      const roads = await this.prisma.$queryRawUnsafe<Array<{
+        edge_id: string;
+        name: string | null;
+        highway: string | null;
+        eiri: number;
+        geom: any; // GeoJSON from ST_AsGeoJSON
+      }>>(
+        `SELECT 
+          r.edge_id, 
+          r.name, 
+          r.highway, 
+          COALESCE(rr.eiri, 0) as eiri,
+          ST_AsGeoJSON(r.geom)::jsonb as geom 
+        FROM "Road" r
+        INNER JOIN "RoadRating" rr ON r.edge_id = rr."roadId" AND r.city_hall_id = rr."entityId"
+        WHERE r.city_hall_id = $1 AND r.edge_id IN (${placeholders})
+        ORDER BY r.edge_id`,
+        cityHallId,
+        ...roadIdsArray
+      );
+
+      if (!roads || roads.length === 0) {
+        return {
+          type: "FeatureCollection",
+          features: [],
+        };
+      }
+
+      // Convert to GeoJSON FeatureCollection
+      const features = roads
+        .filter((road) => road.geom && road.geom.coordinates)
+        .map((road) => {
+          const eiri = road.eiri || 0;
+          const color = getEiriHexColor(eiri);
+
+          return {
+            type: "Feature" as const,
+            properties: {
+              edge_id: road.edge_id,
+              name: road.name,
+              highway: road.highway,
+              eiri: eiri,
+              color: color,
+            },
+            geometry: road.geom as {
+              type: "LineString";
+              coordinates: number[][];
+            },
+          };
+        });
+
+      return {
+        type: "FeatureCollection",
+        features,
+      };
+    } catch (error: any) {
+      this.logger.error(`Failed to get all roads as GeoJSON: ${error?.message || error}`);
       return null;
     }
   }

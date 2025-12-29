@@ -470,6 +470,8 @@ export class RoadsController {
     }
 
     const roadIds = allRatings.map((r) => r.roadId);
+    // Note: If an edge has multiple segments, this map will contain one entry per segment.
+    // Currently, we use the last segment's rating. Future enhancement: aggregate or show worst segment.
     const ratingByRoadId = new Map(allRatings.map((r) => [r.roadId, r.eiri]));
 
     // Filter out roadIds that don't have at least 3 entries in RoadRatingHistory

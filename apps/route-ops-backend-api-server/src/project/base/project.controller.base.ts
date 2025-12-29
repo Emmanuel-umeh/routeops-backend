@@ -176,6 +176,7 @@ export class ProjectControllerBase {
           orderBy: {
             videoTime: "asc",
           },
+          take: 20, // Limit to first 20 video metadata entries for performance
         },
         surveys: {
           select: {
@@ -191,6 +192,10 @@ export class ProjectControllerBase {
             createdAt: true,
             updatedAt: true,
           },
+          take: 10, // Limit to first 10 surveys for performance
+          orderBy: {
+            createdAt: "desc",
+          },
         },
         routePoints: {
           select: {
@@ -201,6 +206,10 @@ export class ProjectControllerBase {
             frameNumber: true,
             createdAt: true,
             updatedAt: true,
+          },
+          take: 20, // Limit to first 20 route points for performance
+          orderBy: {
+            timestamp: "asc",
           },
         },
         hazards: {
@@ -214,6 +223,10 @@ export class ProjectControllerBase {
             imageUrl: true,
             createdAt: true,
             updatedAt: true,
+          },
+          take: 20, // Limit to first 20 hazards for performance
+          orderBy: {
+            createdAt: "desc",
           },
         },
       },

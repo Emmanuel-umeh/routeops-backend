@@ -174,12 +174,13 @@ enum EnumVehicleType {
 model RoadRatingHistory {
   id             String   @id @default(uuid())
   entityId       String // CityHall.id
-  roadId         String // edgeId
+  roadId         String // edgeId (or segmentId in format: edgeId_seg_index)
   eiri           Float // EIRI rating
   userId         String // User.id who made the survey
   surveyId       String? // Survey.id (denormalized for analytics)
   projectId      String? // Project.id (denormalized for analytics)
   anomaliesCount Int? // Pre-calculated anomalies count for this survey+edge
+  segmentId      String? // Segment identifier (format: edgeId_seg_index) - nullable for backward compatibility
   createdAt      DateTime @default(now())
 
   entity  CityHall @relation(fields: [entityId], references: [id])
@@ -193,20 +194,24 @@ model RoadRatingHistory {
   @@index([surveyId])
   @@index([projectId])
   @@index([roadId, createdAt]) // For time-filtered queries
+  @@index([segmentId]) // For segment-based queries
 }
 
 model RoadRating {
   id        String   @id @default(uuid())
   entityId  String // CityHall.id
-  roadId    String // edgeId
+  roadId    String // edgeId (original edge identifier)
   eiri      Float // Current/aggregated EIRI rating
+  segmentId String? // Segment identifier (format: edgeId_seg_index) - nullable for backward compatibility (null = entire edge rated)
   updatedAt DateTime @default(now()) @updatedAt
 
   entity CityHall @relation(fields: [entityId], references: [id])
 
-  @@unique([entityId, roadId])
+  @@unique([entityId, roadId, segmentId]) // Allow multiple segments per edge
   @@index([entityId])
   @@index([roadId])
+  @@index([segmentId]) // For segment-based queries
+  @@index([entityId, roadId]) // For queries by edgeId
 }
 
 model VideoMetadata {

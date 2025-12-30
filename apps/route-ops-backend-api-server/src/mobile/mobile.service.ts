@@ -4,10 +4,20 @@ import { PrismaService } from "../prisma/prisma.service";
 import { UserInfo } from "../auth/UserInfo";
 import { EnumProjectStatus } from "../project/base/EnumProjectStatus";
 import {StartProjectDto} from "./dto/StartProjectDto";
+import { RoadsService } from "../roads/roads.service";
+import * as turf from "@turf/turf";
+import {
+  splitEdgeIntoSegments,
+  findSegmentsForPoint,
+  SEGMENT_LENGTH_METERS,
+} from "../util/edgeSegmentation.util";
 
 @Injectable()
 export class MobileService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly roadsService: RoadsService
+  ) {}
 
   async getMobileUser(user: UserInfo) {
     const dbUser = await this.prisma.user.findUnique({
@@ -17,6 +27,9 @@ export class MobileService {
         username: true,
         roles: true,
         cityHallId: true,
+        firstName: true,
+        lastName: true,
+        email:true
       },
     });
     return {
@@ -25,6 +38,9 @@ export class MobileService {
       roles: (dbUser?.roles as string[]) ?? [],
       entityId: dbUser?.cityHallId ?? null,
       features: [],
+      firstName: dbUser?.firstName ?? null,
+      lastName: dbUser?.lastName ?? null,
+      email: dbUser?.email ?? null,
     };
   }
 
@@ -370,7 +386,7 @@ export class MobileService {
     }
 
     // Create survey for this project, including all distinct edgeIds traversed
-    const edgeIds = Array.from(edgeIdSet);
+    const traversedEdgeIds = Array.from(edgeIdSet);
     const survey = await this.prisma.survey.create({
       data: {
         project: { connect: { id: projectId } },
@@ -382,7 +398,7 @@ export class MobileService {
         bbox: bbox as any,
         eIriAvg: eIriAvg as any,
         lengthMeters: lengthMeters as any,
-        edgeIds,
+        edgeIds: traversedEdgeIds,
       } as any,
       select: { id: true },
     });
@@ -426,9 +442,9 @@ export class MobileService {
       }
     }
 
-    // Process road ratings: save history and update current ratings
-    // Group features by edgeId and collect eIri values
-    const edgeIdRatings = new Map<string, number[]>(); // roadId -> [eIri values]
+    // Process road ratings with segmentation: save history and update current ratings
+    // Group features by edgeId and collect eIri values with their coordinates
+    const edgeIdRatings = new Map<string, Array<{ eIri: number; coord?: [number, number] }>>(); // roadId -> [{eIri, coord}]
     
     if (geometry?.type === "FeatureCollection") {
       for (const f of geometry.features ?? []) {
@@ -439,6 +455,15 @@ export class MobileService {
           (f as any)?.properties?.road_id;
         const eIri = Number((f as any)?.properties?.eIri ?? (f as any)?.properties?.eiri);
         
+        // Extract coordinate from feature geometry
+        let coord: [number, number] | undefined;
+        if (f?.geometry?.type === "Point" && Array.isArray(f.geometry.coordinates)) {
+          const [lng, lat] = f.geometry.coordinates;
+          if (typeof lng === "number" && typeof lat === "number") {
+            coord = [lng, lat];
+          }
+        }
+        
         if (
           typeof featureEdgeId === "string" &&
           featureEdgeId.trim().length > 0 &&
@@ -448,39 +473,181 @@ export class MobileService {
           if (!edgeIdRatings.has(featureEdgeId)) {
             edgeIdRatings.set(featureEdgeId, []);
           }
-          edgeIdRatings.get(featureEdgeId)!.push(eIri);
+          edgeIdRatings.get(featureEdgeId)!.push({ eIri, coord });
         }
       }
     }
 
-    // Save to RoadRatingHistory and update RoadRating
-    for (const [roadId, eIriValues] of edgeIdRatings.entries()) {
-      // Calculate average eIri for this roadId in this survey
+    // Get edge geometries for segmentation
+    const edgeIdsForSegmentation = Array.from(edgeIdRatings.keys());
+    const edgeGeometries = edgeIdsForSegmentation.length > 0 
+      ? await this.roadsService.getGeometriesByRoadIds(edgeIdsForSegmentation)
+      : new Map<string, any>();
+
+    // Process ratings with segmentation: group by segment instead of entire edge
+    const segmentRatings = new Map<string, number[]>(); // segmentId -> [eIri values]
+    const segmentToEdgeId = new Map<string, string>(); // segmentId -> edgeId
+    
+    for (const [edgeId, ratings] of edgeIdRatings.entries()) {
+      const edgeGeometry = edgeGeometries.get(edgeId);
+      
+      if (!edgeGeometry) {
+        // Fallback: if geometry not found, rate entire edge (backward compatibility)
+        const avgEiri = ratings.reduce((sum, r) => sum + r.eIri, 0) / ratings.length;
+        const segmentKey = `${edgeId}_null`; // null segmentId = entire edge
+        if (!segmentRatings.has(segmentKey)) {
+          segmentRatings.set(segmentKey, []);
+          segmentToEdgeId.set(segmentKey, edgeId);
+        }
+        segmentRatings.get(segmentKey)!.push(avgEiri);
+        continue;
+      }
+
+      // Split edge into segments
+      let segments;
+      try {
+        const lineString = edgeGeometry.type === "LineString" 
+          ? edgeGeometry 
+          : edgeGeometry.type === "Feature" 
+            ? edgeGeometry.geometry 
+            : null;
+        
+        if (!lineString || !lineString.coordinates || lineString.coordinates.length < 2) {
+          // Invalid geometry, fallback to entire edge
+          const avgEiri = ratings.reduce((sum, r) => sum + r.eIri, 0) / ratings.length;
+          const segmentKey = `${edgeId}_null`;
+          if (!segmentRatings.has(segmentKey)) {
+            segmentRatings.set(segmentKey, []);
+            segmentToEdgeId.set(segmentKey, edgeId);
+          }
+          segmentRatings.get(segmentKey)!.push(avgEiri);
+          continue;
+        }
+
+        segments = splitEdgeIntoSegments(edgeId, lineString);
+      } catch (e) {
+        // Error splitting, fallback to entire edge
+        const avgEiri = ratings.reduce((sum, r) => sum + r.eIri, 0) / ratings.length;
+        const segmentKey = `${edgeId}_null`;
+        if (!segmentRatings.has(segmentKey)) {
+          segmentRatings.set(segmentKey, []);
+          segmentToEdgeId.set(segmentKey, edgeId);
+        }
+        segmentRatings.get(segmentKey)!.push(avgEiri);
+        continue;
+      }
+
+      if (segments.length === 0) {
+        // No segments, fallback to entire edge
+        const avgEiri = ratings.reduce((sum, r) => sum + r.eIri, 0) / ratings.length;
+        const segmentKey = `${edgeId}_null`;
+        if (!segmentRatings.has(segmentKey)) {
+          segmentRatings.set(segmentKey, []);
+          segmentToEdgeId.set(segmentKey, edgeId);
+        }
+        segmentRatings.get(segmentKey)!.push(avgEiri);
+        continue;
+      }
+
+      // Map each rating to its segment(s) based on coordinate
+      const ratingsBySegment = new Map<number, number[]>(); // segmentIndex -> [eIri values]
+      
+      for (const rating of ratings) {
+        if (rating.coord) {
+          // Find which segment(s) this coordinate belongs to
+          const segmentIndices = findSegmentsForPoint(rating.coord, segments, SEGMENT_LENGTH_METERS / 2);
+          
+          if (segmentIndices.length > 0) {
+            // Add rating to matching segments
+            for (const segIdx of segmentIndices) {
+              if (!ratingsBySegment.has(segIdx)) {
+                ratingsBySegment.set(segIdx, []);
+              }
+              ratingsBySegment.get(segIdx)!.push(rating.eIri);
+            }
+          } else {
+            // No segment found, assign to nearest segment
+            let nearestSegIdx = 0;
+            let minDist = Infinity;
+            for (let i = 0; i < segments.length; i++) {
+              try {
+                const point = turf.point(rating.coord);
+                const nearest = turf.nearestPointOnLine(segments[i].geometry, point, { units: "meters" });
+                const dist = nearest.properties?.dist ?? turf.distance(point, nearest, { units: "meters" });
+                if (dist < minDist) {
+                  minDist = dist;
+                  nearestSegIdx = i;
+                }
+              } catch (e) {
+                continue;
+              }
+            }
+            if (!ratingsBySegment.has(nearestSegIdx)) {
+              ratingsBySegment.set(nearestSegIdx, []);
+            }
+            ratingsBySegment.get(nearestSegIdx)!.push(rating.eIri);
+          }
+        } else {
+          // No coordinate, distribute evenly across all segments (fallback)
+          const avgEiri = rating.eIri;
+          for (let i = 0; i < segments.length; i++) {
+            if (!ratingsBySegment.has(i)) {
+              ratingsBySegment.set(i, []);
+            }
+            ratingsBySegment.get(i)!.push(avgEiri);
+          }
+        }
+      }
+
+      // Aggregate ratings by segment
+      for (const [segIdx, eIriValues] of ratingsBySegment.entries()) {
+        const segment = segments[segIdx];
+        if (!segment) continue;
+        
+        const segmentId = segment.segmentId;
+        if (!segmentRatings.has(segmentId)) {
+          segmentRatings.set(segmentId, []);
+          segmentToEdgeId.set(segmentId, edgeId);
+        }
+        segmentRatings.get(segmentId)!.push(...eIriValues);
+      }
+    }
+
+    // Save to RoadRatingHistory and update RoadRating for each segment
+    for (const [segmentId, eIriValues] of segmentRatings.entries()) {
+      const edgeId = segmentToEdgeId.get(segmentId) || segmentId.split("_seg_")[0];
       const avgEiri = eIriValues.reduce((a, b) => a + b, 0) / eIriValues.length;
       
-      // Get anomalies count for this edgeId (0 if none)
-      const anomaliesCount = anomaliesCountByEdgeId.get(roadId) || 0;
+      // Parse segmentId: if it ends with "_null", it's the entire edge (backward compatibility)
+      const isEntireEdge = segmentId.endsWith("_null");
+      const finalSegmentId = isEntireEdge ? null : segmentId;
+      const finalRoadId = edgeId; // Always use original edgeId as roadId
       
-      // Save to history (one entry per survey, using average) with denormalized fields
+      // Get anomalies count for this edgeId (0 if none)
+      const anomaliesCount = anomaliesCountByEdgeId.get(edgeId) || 0;
+      
+      // Save to history with segmentId (using 'as any' until migration is applied)
       await this.prisma.roadRatingHistory.create({
         data: {
           entityId,
-          roadId,
+          roadId: finalRoadId,
+          segmentId: finalSegmentId,
           eiri: avgEiri,
           userId: user.id,
           surveyId: survey.id,
           projectId: projectId,
           anomaliesCount: anomaliesCount > 0 ? anomaliesCount : null,
-        },
+        } as any,
       });
 
-      // Update or create RoadRating (aggregate all ratings for this roadId)
-      // Get all historical ratings for this roadId to calculate overall average
+      // Update or create RoadRating (aggregate all ratings for this roadId+segmentId)
+      // Get all historical ratings for this roadId+segmentId to calculate overall average
       const allRatings = await this.prisma.roadRatingHistory.findMany({
         where: {
           entityId,
-          roadId,
-        },
+          roadId: finalRoadId,
+          segmentId: finalSegmentId,
+        } as any,
         select: { eiri: true },
       });
 
@@ -489,19 +656,21 @@ export class MobileService {
           ? allRatings.reduce((sum: number, r: { eiri: number }) => sum + r.eiri, 0) / allRatings.length
           : avgEiri;
 
-      // Upsert RoadRating
+      // Upsert RoadRating with segmentId (using 'as any' until migration is applied)
       await this.prisma.roadRating.upsert({
         where: {
-          entityId_roadId: {
+          entityId_roadId_segmentId: {
             entityId,
-            roadId,
+            roadId: finalRoadId,
+            segmentId: finalSegmentId,
           },
-        },
+        } as any,
         create: {
           entityId,
-          roadId,
+          roadId: finalRoadId,
+          segmentId: finalSegmentId,
           eiri: overallAvgEiri,
-        },
+        } as any,
         update: {
           eiri: overallAvgEiri,
         },

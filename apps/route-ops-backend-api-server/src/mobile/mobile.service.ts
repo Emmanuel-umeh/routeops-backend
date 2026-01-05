@@ -684,15 +684,34 @@ export class MobileService {
   }
 
   async uploadAttachments(body: any) {
-    const { projectId, type, files } = body ?? {};
+    const { projectId, type, files, videoMetadata } = body ?? {};
     const uploaded = Array.isArray(files) ? files.length : 0;
 
     // If type is video, save the first video URL to the project
     if (type === "video" && Array.isArray(files) && files.length > 0) {
+      // Update project with video URL
       await this.prisma.project.update({
         where: { id: projectId },
         data: { videoUrl: files[0] },
       });
+
+      // Save video metadata if provided
+      if (Array.isArray(videoMetadata) && videoMetadata.length > 0) {
+        // Delete existing video metadata for this project (to allow updates)
+        await this.prisma.videoMetadata.deleteMany({
+          where: { projectId },
+        });
+
+        // Create new video metadata entries
+        await this.prisma.videoMetadata.createMany({
+          data: videoMetadata.map((meta: { videoTime: number; lat: number; lng: number }) => ({
+            projectId,
+            videoTime: meta.videoTime,
+            lat: meta.lat,
+            lng: meta.lng,
+          })),
+        });
+      }
     }
 
     return { uploaded, remaining: 0, complete: true, projectId, type };

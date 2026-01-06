@@ -176,7 +176,6 @@ export class ProjectControllerBase {
           orderBy: {
             videoTime: "asc",
           },
-          take: 20, // Limit to first 20 video metadata entries for performance
         },
         surveys: {
           select: {
@@ -315,6 +314,18 @@ export class ProjectControllerBase {
         status: true,
         updatedAt: true,
         videoUrl: true,
+        videoMetadata: {
+          select: {
+            id: true,
+            videoTime: true,
+            lat: true,
+            lng: true,
+            createdAt: true,
+          },
+          orderBy: {
+            videoTime: "asc",
+          },
+        },
         surveys: {
           select: {
             id: true,

@@ -160,16 +160,16 @@ export class SurveyController extends SurveyControllerBase {
   }
 
   @common.Get("edge-analytics/:edgeId")
-  @ApiOperation({ summary: "Get road-level analytics for a given edgeId" })
+  @ApiOperation({ summary: "Get road-level analytics for a given edgeId (last 7 days with activity)" })
   @ApiQuery({
     name: "from",
     required: false,
-    description: "Start date (ISO string). If omitted, no lower bound.",
+    description: "Ignored - endpoint automatically fetches last 7 days with activity",
   })
   @ApiQuery({
     name: "to",
     required: false,
-    description: "End date (ISO string). If omitted, no upper bound.",
+    description: "Ignored - endpoint automatically fetches last 7 days with activity",
   })
   @ApiOkResponse({ description: "Road analytics for the requested edgeId" })
   async edgeAnalytics(
@@ -184,13 +184,73 @@ export class SurveyController extends SurveyControllerBase {
       throw new common.BadRequestException("edgeId is required");
     }
 
-    const fromDate = from ? new Date(from) : undefined;
-    const toDate = to ? new Date(to) : undefined;
-    if ((from && Number.isNaN(fromDate!.getTime())) || (to && Number.isNaN(toDate!.getTime()))) {
-      throw new common.BadRequestException("Invalid from/to date");
+    const authUser = (req as any).user as { id: string; roles: string[] } | undefined;
+
+    // Entity scoping for non-admins (restrict to user's cityHall)
+    let scopedCityHallId: string | null = null;
+    if (authUser?.id && !authUser.roles?.includes("admin")) {
+      const dbUser = await this.prisma.user.findUnique({
+        where: { id: authUser.id },
+        select: { cityHallId: true },
+      });
+      if (dbUser?.cityHallId) {
+        scopedCityHallId = dbUser.cityHallId;
+      }
     }
 
-    const authUser = (req as any).user as { id: string; roles: string[] } | undefined;
+    // Find last 7 days with activity for this edgeId
+    const historyWhereForDays: any = {
+      roadId: edgeId,
+    };
+    if (scopedCityHallId) {
+      historyWhereForDays.entityId = scopedCityHallId;
+    }
+
+    // Get all history entries to find unique days with activity
+    const allHistoryEntries = await this.prisma.roadRatingHistory.findMany({
+      where: historyWhereForDays,
+      select: {
+        createdAt: true,
+      } as any,
+      orderBy: { createdAt: "desc" },
+    });
+
+    // Extract unique days (date only, ignoring time)
+    const uniqueDays = new Set<string>();
+    for (const entry of allHistoryEntries) {
+      const date = new Date(entry.createdAt);
+      const dateKey = date.toISOString().split("T")[0]; // YYYY-MM-DD format
+      uniqueDays.add(dateKey);
+    }
+
+    // Get last 7 days with activity (sorted descending, take first 7)
+    const sortedDays = Array.from(uniqueDays)
+      .sort((a, b) => b.localeCompare(a)) // Descending order (newest first)
+      .slice(0, 7);
+
+    if (sortedDays.length === 0) {
+      // No activity found, return empty result
+      return {
+        totalSurveys: 0,
+        averageEiri: null,
+        uniqueUsers: 0,
+        totalAnomalies: 0,
+        recentSurveys: [],
+        recentAnomalies: [],
+        dailyData: [],
+      };
+    }
+
+    // Calculate date range from the 7 days
+    // fromDate = start of earliest day, toDate = end of latest day
+    const earliestDay = sortedDays[sortedDays.length - 1]; // Last in sorted array (oldest)
+    const latestDay = sortedDays[0]; // First in sorted array (newest)
+
+    const fromDate = new Date(earliestDay);
+    fromDate.setHours(0, 0, 0, 0);
+
+    const toDate = new Date(latestDay);
+    toDate.setHours(23, 59, 59, 999);
 
     // Parse comma-separated exclusion lists (ids user has deselected in UI)
     const excludedSurveyIds = (excludeSurveyIdsRaw ?? "")
@@ -211,37 +271,25 @@ export class SurveyController extends SurveyControllerBase {
     };
 
     // Date filters on survey.startTime and hazard.createdAt
-    if (fromDate || toDate) {
-      surveyWhereBase.startTime = {};
-      hazardWhereBase.createdAt = {};
-      if (fromDate) {
-        surveyWhereBase.startTime.gte = fromDate;
-        hazardWhereBase.createdAt.gte = fromDate;
-      }
-      if (toDate) {
-        surveyWhereBase.startTime.lte = toDate;
-        hazardWhereBase.createdAt.lte = toDate;
-      }
-    }
+    surveyWhereBase.startTime = {
+      gte: fromDate,
+      lte: toDate,
+    };
+    hazardWhereBase.createdAt = {
+      gte: fromDate,
+      lte: toDate,
+    };
 
-    // Entity scoping for non-admins (restrict to user's cityHall)
-    let scopedCityHallId: string | null = null;
-    if (authUser?.id && !authUser.roles?.includes("admin")) {
-      const dbUser = await this.prisma.user.findUnique({
-        where: { id: authUser.id },
-        select: { cityHallId: true },
-      });
-      if (dbUser?.cityHallId) {
-        scopedCityHallId = dbUser.cityHallId;
-        surveyWhereBase.project = {
-          ...(surveyWhereBase.project || {}),
-          cityHallId: dbUser.cityHallId,
-        };
-        hazardWhereBase.project = {
-          ...(hazardWhereBase.project || {}),
-          cityHallId: dbUser.cityHallId,
-        };
-      }
+    // Apply entity scoping to base filters
+    if (scopedCityHallId) {
+      surveyWhereBase.project = {
+        ...(surveyWhereBase.project || {}),
+        cityHallId: scopedCityHallId,
+      };
+      hazardWhereBase.project = {
+        ...(hazardWhereBase.project || {}),
+        cityHallId: scopedCityHallId,
+      };
     }
 
     // When surveys are excluded, get their projectIds to exclude from history
@@ -271,15 +319,11 @@ export class SurveyController extends SurveyControllerBase {
       historyWhere.entityId = scopedCityHallId;
     }
 
-    if (fromDate || toDate) {
-      historyWhere.createdAt = {};
-      if (fromDate) {
-        historyWhere.createdAt.gte = fromDate;
-      }
-      if (toDate) {
-        historyWhere.createdAt.lte = toDate;
-      }
-    }
+    // Always apply date filters (fromDate and toDate are always defined after finding 7 days)
+    historyWhere.createdAt = {
+      gte: fromDate,
+      lte: toDate,
+    };
 
     if (excludedSurveyIds.length > 0) {
       historyWhere.surveyId = {
@@ -468,15 +512,11 @@ export class SurveyController extends SurveyControllerBase {
       };
     }
 
-    if (fromDate || toDate) {
-      hazardWhere.createdAt = {};
-      if (fromDate) {
-        hazardWhere.createdAt.gte = fromDate;
-      }
-      if (toDate) {
-        hazardWhere.createdAt.lte = toDate;
-      }
-    }
+    // Always apply date filters (fromDate and toDate are always defined after finding 7 days)
+    hazardWhere.createdAt = {
+      gte: fromDate,
+      lte: toDate,
+    };
 
     if (scopedCityHallId) {
       hazardWhere.project = {
@@ -508,11 +548,10 @@ export class SurveyController extends SurveyControllerBase {
       };
     });
 
-    // Calculate daily EIRI data using history entries (optimized)
+    // Calculate daily EIRI data using history entries (only for days with activity)
     const dailyEiriData = this.calculateDailyEiriDataFromHistory(
       filteredHistory,
-      fromDate,
-      toDate
+      sortedDays // Pass the actual days with activity
     );
 
     return {
@@ -529,11 +568,10 @@ export class SurveyController extends SurveyControllerBase {
     };
   }
 
-  // OPTIMIZED: Calculate daily EIRI from history entries instead of querying Survey table
+  // OPTIMIZED: Calculate daily EIRI from history entries for specific days with activity
   private calculateDailyEiriDataFromHistory(
     historyEntries: any[],
-    fromDate: Date | undefined,
-    toDate: Date | undefined
+    daysWithActivity: string[] // Array of date strings (YYYY-MM-DD) with activity
   ): Array<{
     date: string;
     day: string;
@@ -541,38 +579,23 @@ export class SurveyController extends SurveyControllerBase {
     month: string;
     value: number | null;
   }> {
-    // Determine the end date (use toDate if provided, otherwise use today)
-    const endDate = toDate ? new Date(toDate) : new Date();
-    endDate.setHours(23, 59, 59, 999); // End of day
-
-    // Calculate start date (6 days before end date for 7 days total)
-    let startDate = new Date(endDate);
-    startDate.setDate(startDate.getDate() - 6);
-    startDate.setHours(0, 0, 0, 0); // Start of day
-
-    if (fromDate) {
-      const fromDateNormalized = new Date(fromDate);
-      fromDateNormalized.setHours(0, 0, 0, 0);
-      if (fromDateNormalized > startDate) {
-        startDate = fromDateNormalized;
-      }
-    }
-
     // Group history entries by date (YYYY-MM-DD)
     const eiriByDate = new Map<string, number[]>();
     for (const h of historyEntries) {
       if (!h.createdAt) continue;
       const date = new Date(h.createdAt);
-      if (date < startDate || date > endDate) continue;
-      
       const dateKey = date.toISOString().split("T")[0];
+      
+      // Only include dates that are in our daysWithActivity list
+      if (!daysWithActivity.includes(dateKey)) continue;
+      
       if (!eiriByDate.has(dateKey)) {
         eiriByDate.set(dateKey, []);
       }
       eiriByDate.get(dateKey)!.push(h.eiri);
     }
 
-    // Generate array for last 7 days
+    // Generate array only for days with activity (sorted descending - newest first)
     const dailyData: Array<{
       date: string;
       day: string;
@@ -584,16 +607,14 @@ export class SurveyController extends SurveyControllerBase {
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-    for (let i = 0; i < 7; i++) {
-      const currentDate = new Date(startDate);
-      currentDate.setDate(startDate.getDate() + i);
-      
-      const dateKey = currentDate.toISOString().split("T")[0];
-      const dayOfWeek = currentDate.getDay();
-      const dayNumber = currentDate.getDate();
-      const monthIndex = currentDate.getMonth();
+    // Process days in descending order (newest first)
+    for (const dateKey of daysWithActivity) {
+      const currentDate = new Date(dateKey + "T00:00:00Z");
+      const dayOfWeek = currentDate.getUTCDay();
+      const dayNumber = currentDate.getUTCDate();
+      const monthIndex = currentDate.getUTCMonth();
 
-      // Calculate average EIRI for this day if history entries exist
+      // Calculate average EIRI for this day
       let value: number | null = null;
       const dayEiris = eiriByDate.get(dateKey);
       if (dayEiris && dayEiris.length > 0) {

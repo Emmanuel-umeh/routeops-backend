@@ -368,6 +368,7 @@ export class MobileService {
     }
 
     // Parse start and end dates if provided (for offline sync support)
+    // Mobile should send ISO 8601 format: "2026-01-07T15:52:21Z" (UTC) or "2026-01-07T15:52:21+01:00" (with colon)
     let surveyStartTime: Date = new Date();
     let surveyEndTime: Date = new Date();
 

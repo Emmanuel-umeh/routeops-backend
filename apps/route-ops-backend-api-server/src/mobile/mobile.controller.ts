@@ -221,6 +221,7 @@ export class MobileController {
           lng: { type: "number", nullable: true },
           remarks: { type: "string", nullable: true },
           startDate: { type: "string", description: "ISO 8601 date" },
+            name: { type: "string" },
         },
       },
     },

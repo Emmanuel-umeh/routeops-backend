@@ -1082,6 +1082,7 @@ export class RoadsController {
     const hazardWhere: any = {
       edgeId,
       projectId: projectIds.length > 0 ? { in: projectIds } : { in: [] },
+      imageUrl: { not: null }, // Only include hazards with imageUrl
     };
 
     if (fromDate || toDate) {

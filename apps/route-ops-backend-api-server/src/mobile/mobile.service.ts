@@ -368,6 +368,7 @@ export class MobileService {
     }
 
     // Parse start and end dates if provided (for offline sync support)
+    // Mobile should send ISO 8601 format: "2026-01-07T15:52:21Z" (UTC) or "2026-01-07T15:52:21+01:00" (with colon)
     let surveyStartTime: Date = new Date();
     let surveyEndTime: Date = new Date();
 
@@ -623,8 +624,15 @@ export class MobileService {
       const finalSegmentId = isEntireEdge ? null : segmentId;
       const finalRoadId = edgeId; // Always use original edgeId as roadId
       
-      // Get anomalies count for this edgeId (0 if none)
-      const anomaliesCount = anomaliesCountByEdgeId.get(edgeId) || 0;
+      // Get anomalies count for this edgeId - only count hazards with imageUrl
+      // Query the database to get accurate count of hazards with imageUrl
+      const anomaliesCount = await this.prisma.hazard.count({
+        where: {
+          edgeId: edgeId,
+          projectId: projectId,
+          imageUrl: { not: null },
+        },
+      });
       
       // Save to history with segmentId (using 'as any' until migration is applied)
       await this.prisma.roadRatingHistory.create({

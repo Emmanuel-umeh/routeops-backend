@@ -212,6 +212,9 @@ export class ProjectControllerBase {
           },
         },
         hazards: {
+          where: {
+            imageUrl: { not: null },
+          },
           select: {
             id: true,
             latitude: true,
@@ -353,6 +356,9 @@ export class ProjectControllerBase {
           },
         },
         hazards: {
+          where: {
+            imageUrl: { not: null },
+          },
           select: {
             id: true,
             typeField: true,
@@ -514,7 +520,7 @@ export class ProjectControllerBase {
   @nestAccessControl.UseRoles({
     resource: "Project",
     action: "delete",
-    possession: "any",
+    possession: "own",
   })
   @swagger.ApiForbiddenResponse({
     type: errors.ForbiddenException,
@@ -596,6 +602,10 @@ export class ProjectControllerBase {
     }
     const results = await this.service.findHazards(params.id, {
       ...query,
+      where: {
+        ...query.where,
+        imageUrl: { not: null },
+      },
       select: {
         createdAt: true,
         createdBy: true,

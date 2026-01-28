@@ -624,8 +624,15 @@ export class MobileService {
       const finalSegmentId = isEntireEdge ? null : segmentId;
       const finalRoadId = edgeId; // Always use original edgeId as roadId
       
-      // Get anomalies count for this edgeId (0 if none)
-      const anomaliesCount = anomaliesCountByEdgeId.get(edgeId) || 0;
+      // Get anomalies count for this edgeId - only count hazards with imageUrl
+      // Query the database to get accurate count of hazards with imageUrl
+      const anomaliesCount = await this.prisma.hazard.count({
+        where: {
+          edgeId: edgeId,
+          projectId: projectId,
+          imageUrl: { not: null },
+        },
+      });
       
       // Save to history with segmentId (using 'as any' until migration is applied)
       await this.prisma.roadRatingHistory.create({

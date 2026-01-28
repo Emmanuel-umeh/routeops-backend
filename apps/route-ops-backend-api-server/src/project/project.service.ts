@@ -201,74 +201,73 @@ export class ProjectService extends ProjectServiceBase {
 
   /**
    * Delete project with cascade deletion of related records
-   * Deletes surveys, routePoints, hazards, and their associated remarks
+   * Deletes surveys, routePoints, hazards, videoMetadata, roadRatingHistory, and their associated remarks
+   * Optimized to use direct deleteMany queries and parallel operations to avoid transaction timeouts
    */
   async deleteProject(args: Prisma.ProjectDeleteArgs): Promise<PrismaProject> {
     const projectId = typeof args.where.id === 'string' ? args.where.id : 
                       (args.where as any).id;
 
-    // Use a transaction to ensure all deletions succeed or none do
+    // Use a transaction with increased timeout (30 seconds) for large projects
     return await this.prisma.$transaction(async (tx) => {
-      // 1. Get all surveys for this project
-      const surveys = await tx.survey.findMany({
-        where: { projectId },
-        select: { id: true },
-      });
-      const surveyIds = surveys.map(s => s.id);
+      // Delete all related records using direct where clauses (more efficient than fetching IDs first)
+      // Run independent operations in parallel where possible
+      
+      // 1. Delete remarks associated with surveys (using projectId through survey relation)
+      // 2. Delete remarks associated with hazards (using projectId through hazard relation)
+      // 3. Delete videoMetadata for this project
+      // 4. Delete roadRatingHistory for this project
+      // These can run in parallel as they don't depend on each other
+      await Promise.all([
+        // Delete remarks for surveys in this project
+        tx.remark.deleteMany({
+          where: {
+            survey: {
+              projectId: projectId,
+            },
+          },
+        }),
+        // Delete remarks for hazards in this project
+        tx.remark.deleteMany({
+          where: {
+            hazard: {
+              projectId: projectId,
+            },
+          },
+        }),
+        // Delete videoMetadata for this project
+        tx.videoMetadata.deleteMany({
+          where: { projectId },
+        }),
+        // Delete roadRatingHistory for this project
+        tx.roadRatingHistory.deleteMany({
+          where: { projectId },
+        }),
+      ]);
 
-      // 2. Get all hazards for this project
-      const hazards = await tx.hazard.findMany({
-        where: { projectId },
-        select: { id: true },
-      });
-      const hazardIds = hazards.map(h => h.id);
+      // 5. Delete surveys (must be after remarks)
+      // 6. Delete hazards (must be after remarks)
+      // 7. Delete routePoints
+      // These can run in parallel as they don't depend on each other
+      await Promise.all([
+        tx.survey.deleteMany({
+          where: { projectId },
+        }),
+        tx.hazard.deleteMany({
+          where: { projectId },
+        }),
+        tx.routePoint.deleteMany({
+          where: { projectId },
+        }),
+      ]);
 
-      // 3. Get all routePoints for this project
-      const routePoints = await tx.routePoint.findMany({
-        where: { projectId },
-        select: { id: true },
-      });
-      const routePointIds = routePoints.map(rp => rp.id);
-
-      // 4. Delete remarks associated with surveys
-      if (surveyIds.length > 0) {
-        await tx.remark.deleteMany({
-          where: { surveyId: { in: surveyIds } },
-        });
-      }
-
-      // 5. Delete remarks associated with hazards
-      if (hazardIds.length > 0) {
-        await tx.remark.deleteMany({
-          where: { hazardId: { in: hazardIds } },
-        });
-      }
-
-      // 6. Delete surveys
-      if (surveyIds.length > 0) {
-        await tx.survey.deleteMany({
-          where: { id: { in: surveyIds } },
-        });
-      }
-
-      // 7. Delete hazards (they may also be linked to routePoints, but we delete them here since they belong to the project)
-      if (hazardIds.length > 0) {
-        await tx.hazard.deleteMany({
-          where: { id: { in: hazardIds } },
-        });
-      }
-
-      // 8. Delete routePoints
-      if (routePointIds.length > 0) {
-        await tx.routePoint.deleteMany({
-          where: { id: { in: routePointIds } },
-        });
-      }
-
-      // 9. Finally, delete the project
+      // 8. Finally, delete the project
       return await tx.project.delete({
         ...args,
       });
+    }, {
+      maxWait: 10000, // Maximum time to wait for a transaction slot (10 seconds)
+      timeout: 30000, // Maximum time the transaction can run (30 seconds)
     });
   }
 }

@@ -112,7 +112,10 @@ export class HazardControllerBase {
 
     return this.service.hazards({
       ...args,
-      where: scopedWhere,
+      where: {
+        ...scopedWhere,
+        imageUrl: { not: null },
+      },
       select: {
         createdAt: true,
         createdBy: true,

@@ -499,6 +499,7 @@ export class SurveyController extends SurveyControllerBase {
     const hazardWhere: any = {
       edgeId,
       projectId: projectIds.length > 0 ? { in: projectIds } : { in: [] },
+      imageUrl: { not: null }, // Only include hazards with imageUrl
     };
 
     if (excludedAnomalyIds.length > 0) {

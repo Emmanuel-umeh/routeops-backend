@@ -459,15 +459,36 @@ export class SurveyController extends SurveyControllerBase {
       );
     }
 
-    // Calculate total anomalies from denormalized anomaliesCount field
-    const totalAnomalies = filteredHistory.reduce(
-      (sum: number, h: any) => sum + (h.anomaliesCount ?? 0),
-      0
-    );
-
     // Get projectIds from filtered history for anomaly queries
     const projectIds = Array.from(
       new Set(filteredHistory.map((h: any) => h.projectId).filter((id: any): id is string => id !== null))
+    );
+
+    // Count hazards with imageUrl per project (same logic as GET /projects/:id/hazards - no edgeId filter)
+    const anomalyCountByProjectId = new Map<string, number>();
+    if (projectIds.length > 0) {
+      const counts = await this.prisma.hazard.groupBy({
+        by: ["projectId"],
+        where: {
+          projectId: { in: projectIds },
+          imageUrl: { not: null },
+        },
+        _count: { id: true },
+      });
+      counts.forEach((c) => {
+        if (c.projectId != null) {
+          anomalyCountByProjectId.set(c.projectId, c._count.id);
+        }
+      });
+    }
+
+    // Total anomalies: sum each project's count once (same as project hazards endpoint)
+    const uniqueProjectIdsInHistory = Array.from(
+      new Set(filteredHistory.map((h: any) => h.projectId).filter((id: any): id is string => id !== null))
+    );
+    const totalAnomalies = uniqueProjectIdsInHistory.reduce(
+      (sum: number, pid: string) => sum + (anomalyCountByProjectId.get(pid) ?? 0),
+      0
     );
 
     // Get recent surveys from history (limit 20)
@@ -480,6 +501,7 @@ export class SurveyController extends SurveyControllerBase {
         const survey = surveyById.get(h.surveyId);
         const creatorId = project?.createdBy as string | undefined;
         const projectId = h.projectId ?? null;
+        const anomalyCount = anomalyCountByProjectId.get(projectId ?? "") ?? 0;
         return {
           id: survey?.id ?? null,
           projectId: projectId,
@@ -491,13 +513,12 @@ export class SurveyController extends SurveyControllerBase {
           createdBy: creatorId ?? null,
           createdByName: creatorId ? creatorNameById.get(creatorId) ?? null : null,
           projectDescription: project?.description ?? null,
-          anomalyCount: h.anomaliesCount ?? 0,
+          anomalyCount,
         };
       });
 
-    // Get recent anomalies (still need to query hazards for full details)
+    // Get recent anomalies: same logic as count and GET /projects/:id/hazards (by project + imageUrl only, no edgeId)
     const hazardWhere: any = {
-      edgeId,
       projectId: projectIds.length > 0 ? { in: projectIds } : { in: [] },
       imageUrl: { not: null }, // Only include hazards with imageUrl
     };

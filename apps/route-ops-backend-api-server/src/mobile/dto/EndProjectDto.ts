@@ -180,6 +180,15 @@ export class AnomalyDto {
   })
   @IsOptional()
   hasAttachment?: boolean;
+
+  @ApiProperty({
+    description: "ISO 8601 date/time when the anomaly was observed (for offline/late uploads). If omitted, server uses current time.",
+    example: "2024-01-23T16:00:00Z",
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  createdAt?: string;
 }
 
 export class EndProjectDto {

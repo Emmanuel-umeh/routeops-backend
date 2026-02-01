@@ -1044,9 +1044,39 @@ export class RoadsController {
       creatorNameById.set(u.id, fullName || u.username || u.id);
     }
 
-    // Calculate total anomalies
-    const totalAnomalies = validHistoryEntries.reduce(
-      (sum: number, h: any) => sum + (h.anomaliesCount ?? 0),
+    // Get projectIds for anomaly queries
+    const projectIds = Array.from(
+      new Set(validHistoryEntries.map((h: any) => h.projectId).filter((id: any): id is string => id !== null))
+    );
+
+    // Count hazards with imageUrl per project (same logic as GET /projects/:id/hazards - no edgeId filter)
+    const anomalyCountByProjectId = new Map<string, number>();
+    if (projectIds.length > 0) {
+      const hazardWhereCount: any = {
+        projectId: { in: projectIds },
+        imageUrl: { not: null },
+      };
+      if (scopedCityHallId) {
+        hazardWhereCount.project = { cityHallId: scopedCityHallId };
+      }
+      const counts = await this.prisma.hazard.groupBy({
+        by: ["projectId"],
+        where: hazardWhereCount,
+        _count: { id: true },
+      });
+      counts.forEach((c) => {
+        if (c.projectId != null) {
+          anomalyCountByProjectId.set(c.projectId, c._count.id);
+        }
+      });
+    }
+
+    // Total anomalies: sum each project's count once (same as project hazards endpoint)
+    const uniqueProjectIdsInHistory = Array.from(
+      new Set(validHistoryEntries.map((h: any) => h.projectId).filter((id: any): id is string => id !== null))
+    );
+    const totalAnomalies = uniqueProjectIdsInHistory.reduce(
+      (sum: number, pid: string) => sum + (anomalyCountByProjectId.get(pid) ?? 0),
       0
     );
 
@@ -1058,6 +1088,7 @@ export class RoadsController {
         const project = h.projectId ? projectById.get(h.projectId) : null;
         const survey = surveyById.get(h.surveyId);
         const creatorId = project?.createdBy as string | undefined;
+        const anomalyCount = anomalyCountByProjectId.get(h.projectId ?? "") ?? 0;
         return {
           id: survey?.id ?? null,
           projectId: h.projectId ?? null,
@@ -1069,18 +1100,12 @@ export class RoadsController {
           createdBy: creatorId ?? null,
           createdByName: creatorId ? creatorNameById.get(creatorId) ?? null : null,
           projectDescription: project?.description ?? null,
-          anomalyCount: h.anomaliesCount ?? 0,
+          anomalyCount,
         };
       });
 
-    // Get projectIds for anomaly queries
-    const projectIds = Array.from(
-      new Set(validHistoryEntries.map((h: any) => h.projectId).filter((id: any): id is string => id !== null))
-    );
-
-    // Get recent anomalies
+    // Get recent anomalies: same logic as count and GET /projects/:id/hazards (by project + imageUrl only, no edgeId)
     const hazardWhere: any = {
-      edgeId,
       projectId: projectIds.length > 0 ? { in: projectIds } : { in: [] },
       imageUrl: { not: null }, // Only include hazards with imageUrl
     };

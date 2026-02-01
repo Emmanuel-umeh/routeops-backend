@@ -424,7 +424,17 @@ export class MobileService {
               (anomaliesCountByEdgeId.get(anomalyEdgeId) || 0) + 1
             );
           }
-          
+
+          // Optional createdAt from frontend (e.g. when uploading hours/days later)
+          const createdAtRaw =
+            (a as any)?.createdAt ?? (a as any)?.created_at ?? null;
+          const createdAt =
+            createdAtRaw && typeof createdAtRaw === "string"
+              ? new Date(createdAtRaw)
+              : undefined;
+          const useCreatedAt =
+            createdAt !== undefined && !Number.isNaN(createdAt.getTime());
+
           await this.prisma.hazard.create({
             data: {
               project: { connect: { id: projectId } },
@@ -435,8 +445,9 @@ export class MobileService {
               severity: a?.severity ?? null,
               typeField: a?.type ?? null,
               createdBy: user.id,
-              externalId: a.mobileId,
+              externalId: (a as any)?.mobileId ?? (a as any)?.id ?? undefined,
               edgeId: anomalyEdgeId,
+              ...(useCreatedAt ? { createdAt } : {}),
             } as any,
           });
         }
@@ -746,6 +757,24 @@ export class MobileService {
       where: { id: hazard.id },
       data: { imageUrl },
     });
+
+    // Recalculate RoadRatingHistory.anomaliesCount for this project+edge so edge analytics shows correct count
+    if (hazard.projectId && hazard.edgeId) {
+      const count = await this.prisma.hazard.count({
+        where: {
+          projectId: hazard.projectId,
+          edgeId: hazard.edgeId,
+          imageUrl: { not: null },
+        },
+      });
+      await this.prisma.roadRatingHistory.updateMany({
+        where: {
+          projectId: hazard.projectId,
+          roadId: hazard.edgeId,
+        },
+        data: { anomaliesCount: count > 0 ? count : null },
+      });
+    }
 
     return {
       success: true,

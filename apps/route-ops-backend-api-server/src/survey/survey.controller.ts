@@ -12,6 +12,12 @@ import {
   extractEiriRange,
   parseStatus,
 } from "../util/filter.util";
+import {
+  computeLogicalSurveyTotals,
+  type EdgeAnalyticsHistoryEntry,
+  type EdgeAnalyticsProjectLookup,
+  type EdgeAnalyticsSurveyLookup,
+} from "../util/edgeAnalytics.util";
 import { PrismaService } from "../prisma/prisma.service";
 import { Request } from "express";
 
@@ -404,11 +410,9 @@ export class SurveyController extends SurveyControllerBase {
     const surveyById = new Map(surveys.map((s) => [s.id, s]));
 
     // Calculate totals from history entries - only count entries with valid survey data
-    // This ensures totalSurveys matches what users can actually see in recentSurveys
     const validHistoryEntries = (historyEntries as any[]).filter(
       (h: any) => h.surveyId && surveyById.has(h.surveyId)
     );
-    const totalSurveys = validHistoryEntries.length;
     const averageEiri = avgResult._avg.eiri ?? null;
 
     // Get unique users (project creators) from projects
@@ -491,31 +495,14 @@ export class SurveyController extends SurveyControllerBase {
       0
     );
 
-    // Get recent surveys from history (limit 20)
-    // Only include entries that have valid survey data to maintain data integrity
-    const recentSurveysWithCreator = filteredHistory
-      .filter((h: any) => h.surveyId && surveyById.has(h.surveyId)) // Only include entries with valid survey
-      .slice(0, 20)
-      .map((h: any) => {
-        const project = h.projectId ? projectById.get(h.projectId) : null;
-        const survey = surveyById.get(h.surveyId);
-        const creatorId = project?.createdBy as string | undefined;
-        const projectId = h.projectId ?? null;
-        const anomalyCount = anomalyCountByProjectId.get(projectId ?? "") ?? 0;
-        return {
-          id: survey?.id ?? null,
-          projectId: projectId,
-          name: survey?.name ?? null,
-          status: survey?.status ?? null,
-          startTime: survey?.startTime ?? null,
-          endTime: survey?.endTime ?? null,
-          eIriAvg: h.eiri,
-          createdBy: creatorId ?? null,
-          createdByName: creatorId ? creatorNameById.get(creatorId) ?? null : null,
-          projectDescription: project?.description ?? null,
-          anomalyCount,
-        };
-      });
+    const { totalSurveys, recentSurveys: recentSurveysWithCreator } = computeLogicalSurveyTotals({
+      historyEntries: filteredHistory as EdgeAnalyticsHistoryEntry[],
+      surveyById: surveyById as Map<string, EdgeAnalyticsSurveyLookup>,
+      projectById: projectById as Map<string, EdgeAnalyticsProjectLookup>,
+      creatorNameById,
+      anomalyCountByProjectId,
+      take: 20,
+    });
 
     // Get recent anomalies: same logic as count and GET /projects/:id/hazards (by project + imageUrl only, no edgeId)
     const hazardWhere: any = {
@@ -549,7 +536,7 @@ export class SurveyController extends SurveyControllerBase {
     const recentAnomaliesRaw = await this.prisma.hazard.findMany({
       where: hazardWhere,
       orderBy: { createdAt: "desc" },
-      take: 20,
+      take: 100,
       include: {
         project: {
           select: {

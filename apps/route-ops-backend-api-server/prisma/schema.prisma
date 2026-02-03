@@ -45,6 +45,7 @@ model Project {
   cityHallId        String?
   createdAt         DateTime            @default(now())
   createdBy         String?
+  createdFromWeb    Boolean             @default(false) // true when project is created via web (POST /api/projects)
   description       String?
   hazards           Hazard[]
   id                String              @id @default(uuid())

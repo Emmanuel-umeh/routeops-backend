@@ -20,8 +20,10 @@ export type EdgeAnalyticsSurveyLookup = {
 
 export type EdgeAnalyticsProjectLookup = {
   id: string;
+  name?: string | null;
   createdBy: string | null;
   description: string | null;
+  createdFromWeb?: boolean;
 };
 
 export type EdgeAnalyticsRecentSurvey = {
@@ -35,6 +37,8 @@ export type EdgeAnalyticsRecentSurvey = {
   createdBy: string | null;
   createdByName: string | null;
   projectDescription: string | null;
+  projectName: string | null;
+  createdFromWeb: boolean;
   anomalyCount: number;
 };
 
@@ -123,6 +127,8 @@ export const computeLogicalSurveyTotals = (
       createdBy: creatorId,
       createdByName: creatorId ? creatorNameById.get(creatorId) ?? null : null,
       projectDescription: project?.description ?? null,
+      projectName: project?.name ?? null,
+      createdFromWeb: project?.createdFromWeb ?? false,
       anomalyCount,
     };
   });

@@ -992,6 +992,7 @@ export class RoadsController {
               createdBy: true,
               description: true,
               cityHallId: true,
+              createdFromWeb: true,
             },
           })
         : Promise.resolve([]),
@@ -1054,11 +1055,12 @@ export class RoadsController {
       new Set(validHistoryEntries.map((h: any) => h.projectId).filter((id: any): id is string => id !== null))
     );
 
-    // Count hazards with imageUrl per project (same logic as GET /projects/:id/hazards - no edgeId filter)
+    // Count hazards with imageUrl per project for this edge only (only anomalies that happened on the selected edge)
     const anomalyCountByProjectId = new Map<string, number>();
     if (projectIds.length > 0) {
       const hazardWhereCount: any = {
         projectId: { in: projectIds },
+        edgeId,
         imageUrl: { not: null },
       };
       if (scopedCityHallId) {
@@ -1076,7 +1078,7 @@ export class RoadsController {
       });
     }
 
-    // Total anomalies: sum each project's count once (same as project hazards endpoint)
+    // Total anomalies on this edge: sum each project's edge-scoped count once
     const uniqueProjectIdsInHistory = Array.from(
       new Set(validHistoryEntries.map((h: any) => h.projectId).filter((id: any): id is string => id !== null))
     );
@@ -1094,9 +1096,10 @@ export class RoadsController {
       take: 20,
     });
 
-    // Get recent anomalies: same logic as count and GET /projects/:id/hazards (by project + imageUrl only, no edgeId)
+    // Get recent anomalies for this edge only (same edgeId filter as count above)
     const hazardWhere: any = {
       projectId: projectIds.length > 0 ? { in: projectIds } : { in: [] },
+      edgeId,
       imageUrl: { not: null }, // Only include hazards with imageUrl
     };
 

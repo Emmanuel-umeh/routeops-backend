@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsString, IsOptional, IsArray, IsNumber, IsEnum, MaxLength, IsDateString } from "class-validator";
+import { IsString, IsOptional, IsArray, IsNumber, IsEnum, MaxLength, IsDateString, IsBoolean } from "class-validator";
 import { EnumProjectStatus } from "../base/EnumProjectStatus";
 
 export class RoutePointDto {
@@ -117,6 +117,15 @@ export class CreateProjectDto {
   @IsDateString()
   @IsOptional()
   scheduledDate?: string | null;
+
+  @ApiProperty({
+    description: "Set to true when creating the project from the web (dashboard). Omit or false for mobile-created projects.",
+    example: true,
+    required: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  createdFromWeb?: boolean;
 
   @ApiProperty({
     description: "Array of route points with coordinates",

@@ -109,6 +109,7 @@ export class ProjectService extends ProjectServiceBase {
         status: EnumProjectStatus.PENDING,
         assignedUser: data.assignedUserId,
         createdBy: data.createdBy,
+        createdFromWeb: data.createdFromWeb ?? false,
         videoUrl: data.videoUrl,
         scheduledDate: data.scheduledDate ? new Date(data.scheduledDate) : undefined,
         cityHall: data.cityHallId ? { connect: { id: data.cityHallId } } : undefined,

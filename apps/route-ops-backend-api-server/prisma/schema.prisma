@@ -112,6 +112,11 @@ model Survey {
   remarksText       String?
   startTime         DateTime?
   status            String?
+  /// Recording quality/status flags sent from mobile at the end of a project
+  /// gpsRecordStatus: "OK" | "PARTIAL_OK" | "NOT_OK"
+  gpsRecordStatus   String?
+  /// videoRecordStatus: "OK" | "PARTIAL_OK" | "NOT_OK"
+  videoRecordStatus String?
   roadRatingHistory RoadRatingHistory[]
   // Geometry for Google Maps (GeoJSON LineString/MultiLineString)
   // Each point in the geometry can have an edgeId in its properties

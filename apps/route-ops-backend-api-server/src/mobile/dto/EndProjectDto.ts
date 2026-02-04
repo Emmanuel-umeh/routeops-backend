@@ -1,6 +1,18 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { Type } from "class-transformer";
-import { IsArray, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, IsUUID, Min, ValidateNested, IsNumber } from "class-validator";
+import {
+  IsArray,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+  ValidateNested,
+  IsNumber,
+} from "class-validator";
 
 export class NumAttachmentsDto {
   @ApiProperty({
@@ -241,6 +253,26 @@ export class EndProjectDto {
   @IsOptional()
   @IsString()
   endDate?: string;
+
+  @ApiProperty({
+    description: 'GPS recording status for this survey (OK, PARTIAL_OK, NOT_OK)',
+    required: false,
+    enum: ["OK", "PARTIAL_OK", "NOT_OK"],
+    example: "OK",
+  })
+  @IsOptional()
+  @IsIn(["OK", "PARTIAL_OK", "NOT_OK"])
+  gpsRecordStatus?: string;
+
+  @ApiProperty({
+    description: 'Video recording status for this survey (OK, PARTIAL_OK, NOT_OK). Omit when project has no video.',
+    required: false,
+    enum: ["OK", "PARTIAL_OK", "NOT_OK"],
+    example: "OK",
+  })
+  @IsOptional()
+  @IsIn(["OK", "PARTIAL_OK", "NOT_OK"])
+  videoRecordStatus?: string;
 }
 
 

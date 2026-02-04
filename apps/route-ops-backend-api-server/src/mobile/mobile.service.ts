@@ -253,7 +253,16 @@ export class MobileService {
     return { projectId };
   }
   async endProject(body: any, user: UserInfo) {
-    const { projectId, numAttachments, geometry, anomalies, startDate, endDate } = body ?? {};
+    const {
+      projectId,
+      numAttachments,
+      geometry,
+      anomalies,
+      startDate,
+      endDate,
+      gpsRecordStatus,
+      videoRecordStatus,
+    } = body ?? {};
 
     if (!projectId) {
       throw new Error("projectId is required");
@@ -395,6 +404,8 @@ export class MobileService {
         startTime: surveyStartTime,
         endTime: surveyEndTime,
         status: "Completed",
+        gpsRecordStatus: gpsRecordStatus ?? null,
+        videoRecordStatus: videoRecordStatus ?? null,
         geometryJson: geometry ?? null,
         bbox: bbox as any,
         eIriAvg: eIriAvg as any,

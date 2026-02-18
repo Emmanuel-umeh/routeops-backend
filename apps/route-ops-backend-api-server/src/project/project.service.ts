@@ -201,16 +201,42 @@ export class ProjectService extends ProjectServiceBase {
   }
 
   /**
-   * Delete project with cascade deletion of related records
-   * Deletes surveys, routePoints, hazards, videoMetadata, roadRatingHistory, and their associated remarks
-   * Optimized to use direct deleteMany queries and parallel operations to avoid transaction timeouts
+   * Delete project with cascade deletion of related records.
+   * Additionally, remove its RoadRatingHistory entries and recalculate
+   * RoadRating for all affected (entityId, roadId, segmentId) pairs so
+   * road ratings reflect only remaining surveys after project deletion.
    */
   async deleteProject(args: Prisma.ProjectDeleteArgs): Promise<PrismaProject> {
     const projectId = typeof args.where.id === 'string' ? args.where.id : 
                       (args.where as any).id;
 
-    // Use a transaction with increased timeout (30 seconds) for large projects
     return await this.prisma.$transaction(async (tx) => {
+      // Load project to get entity (cityHallId) for rating recalculation
+      const existing = await tx.project.findUnique({
+        where: { id: projectId },
+        select: {
+          id: true,
+          cityHallId: true,
+        },
+      });
+
+      const entityId = existing?.cityHallId ?? null;
+
+      // Preload RoadRatingHistory rows so we know which ratings are affected
+      const historyRows =
+        entityId != null
+          ? await tx.roadRatingHistory.findMany({
+              where: {
+                projectId,
+                entityId,
+              },
+              select: {
+                roadId: true,
+                segmentId: true,
+              },
+            })
+          : [];
+
       // Delete all related records using direct where clauses (more efficient than fetching IDs first)
       // Run independent operations in parallel where possible
       
@@ -263,9 +289,66 @@ export class ProjectService extends ProjectServiceBase {
       ]);
 
       // 8. Finally, delete the project
-      return await tx.project.delete({
+      const deleted = await tx.project.delete({
         ...args,
       });
+
+      // If we have no entity or no history rows, nothing to recalculate
+      if (!entityId || historyRows.length === 0) {
+        return deleted;
+      }
+
+      // Recalculate ratings for each affected (roadId, segmentId)
+      const affectedKeys = new Set<string>();
+      for (const row of historyRows) {
+        const key = `${row.roadId}__${row.segmentId ?? "null"}`;
+        affectedKeys.add(key);
+      }
+
+      for (const key of affectedKeys) {
+        const [roadId, segmentToken] = key.split("__");
+        const segmentId = segmentToken === "null" ? null : segmentToken;
+
+        const remainingHistory = await tx.roadRatingHistory.findMany({
+          where: {
+            entityId,
+            roadId,
+            segmentId,
+          },
+          select: {
+            eiri: true,
+          },
+        });
+
+        if (remainingHistory.length === 0) {
+          // No more history for this segment: remove the current rating
+          await tx.roadRating.deleteMany({
+            where: {
+              entityId,
+              roadId,
+              segmentId,
+            },
+          });
+          continue;
+        }
+
+        const overallAvgEiri =
+          remainingHistory.reduce((sum, r) => sum + r.eiri, 0) /
+          remainingHistory.length;
+
+        await tx.roadRating.updateMany({
+          where: {
+            entityId,
+            roadId,
+            segmentId,
+          },
+          data: {
+            eiri: overallAvgEiri,
+          },
+        });
+      }
+
+      return deleted;
     }, {
       maxWait: 10000, // Maximum time to wait for a transaction slot (10 seconds)
       timeout: 30000, // Maximum time the transaction can run (30 seconds)
